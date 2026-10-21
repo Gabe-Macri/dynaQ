@@ -1,5 +1,7 @@
 # dynaQ — Professional System-Wide Audio Management Suite
 
+[![Swift Check](https://github.com/Gabe-Macri/dynaQ/actions/workflows/swift.yml/badge.svg)](https://github.com/Gabe-Macri/dynaQ/actions/workflows/swift.yml)
+
 **dynaQ** is a high-performance, ultra-low-latency audio management suite engineered for audio engineers, music producers, mastering studios, and audiophiles on macOS. Its flagship feature is a **system-wide, multi-band parametric and dynamic equalizer** that processes all system audio with studio-grade precision directly across CoreAudio hardware inputs and outputs.
 
 ---
@@ -126,6 +128,26 @@ swift run dynaQ
 ---
 
 ##  Production Release & Installation
+
+### Option A: Install from Disk Image (`.dmg`)
+Double-click `dist/dynaQ-1.0.0-beta.1.dmg` and drag `dynaQ.app` into `/Applications`.
+
+### Option B: Build Production Release Package from Source
+Run the release packaging pipeline:
+```bash
+./scripts/build_release.sh
+```
+This automatically:
+1. Compiles optimized production release binaries (`swift build -c release`).
+2. Generates multi-resolution Retina `AppIcon.icns`.
+3. Assembles the standalone macOS application bundle: `dist/dynaQ.app`.
+4. Codesigns the bundle with ad-hoc signing (`codesign --deep`).
+5. Packages a drag-and-drop installer disk image: `dist/dynaQ-1.0.0-beta.1.dmg`.
+
+
+---
+
+##  Production Release & Installation (Beta 1)
 
 ### Option A: Install from Disk Image (`.dmg`)
 Double-click `dist/dynaQ-1.0.0-beta.1.dmg` and drag `dynaQ.app` into `/Applications`.
