@@ -104,3 +104,4 @@ public protocol AudioProcessingClient: AnyObject {
    - If a client is registered and active, audio samples are passed to `client.processAudio(...)`.
    - If the client returns `false` or drops frames, the router transparently forwards input audio to output hardware to maintain continuous system playback.
 4. On client termination, `unregisterClient(self)` restores direct hardware passthrough.
+

@@ -71,3 +71,4 @@ dynaQ includes an intelligent feedback prevention check:
 2. If the input device is identified as `Built-in Microphone` and the output device is identified as `Built-in Speakers`, dynaQ automatically engages feedback protection:
    - The user is warned via telemetry status.
    - The capture loop is muted until headphones or an external USB audio interface is connected.
+

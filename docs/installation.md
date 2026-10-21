@@ -84,3 +84,4 @@ System audio interception requires macOS user permission:
 1. On the first launch, macOS will present a system prompt requesting permission to capture audio.
 2. Grant permission under **System Settings > Privacy & Security > Microphone**.
 3. If using loopback devices, ensure the virtual driver has permission to capture system output.
+

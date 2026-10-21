@@ -140,3 +140,4 @@ Real-time audio levels are measured using vectorized routines from Apple's `Acce
 $$\text{dBFS} = 20 \log_{10}(\text{magnitude})$$
 
 Calculations avoid branch-heavy loops and operate directly on contiguous memory buffers.
+

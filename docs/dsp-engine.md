@@ -119,3 +119,4 @@ Loudness monitoring uses standard K-weighting:
 1. **Stage 1**: High-shelf filter modeling head diffraction (+4.0 dB at 1.5 kHz).
 2. **Stage 2**: High-pass filter modeling human auditory response (-3.0 dB at 38 Hz).
 3. Mean square calculation across gated 400 ms momentary windows and integrated long-term buffers.
+

@@ -150,3 +150,4 @@ Launch the graphical equalizer application:
 ```bash
 swift run dynaQ
 ```
+

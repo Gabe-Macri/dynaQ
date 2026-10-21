@@ -97,3 +97,4 @@ dynaQ Audio Routing Status:
 • Native CoreAudio System Tap: Fully supported & active
 • Virtual HAL Driver: Not Installed (Using Native User-Space Tap)
 ```
+
