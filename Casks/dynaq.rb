@@ -18,3 +18,4 @@ cask "dynaq" do
     "~/Library/Preferences/com.dynaq.audio.plist",
   ]
 end
+

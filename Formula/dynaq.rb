@@ -26,3 +26,4 @@ class Dynaq < Formula
     assert_match "dynaQ", shell_output("#{bin}/dynaq --help")
   end
 end
+
