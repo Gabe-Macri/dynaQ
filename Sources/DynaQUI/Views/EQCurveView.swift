@@ -2,7 +2,8 @@ import SwiftUI
 import DynaQCore
 import DynaQDSP
 
-/// High-resolution Studio Parametric EQ Curve with real-time FFT spectrum background and draggable nodes.
+/// High-performance Studio Parametric EQ Curve with real-time discrete RTA spectrum analyzer and draggable terminal reticle nodes.
+/// Optimized for 60fps rendering with precalculated curve caching and zero allocations during audio playback.
 public struct EQCurveView: View {
     @Binding public var profile: EQProfile
     @Binding public var selectedBandID: UUID?
@@ -14,7 +15,19 @@ public struct EQCurveView: View {
     private let minDB: Float = -24.0
     private let maxDB: Float = 24.0
 
-    @State private var hoveredBandIndex: Int? = nil
+    // Static precalculated frequency points across 128 logarithmic steps
+    private static let samplePoints: Int = 128
+    private static let sampleFrequencies: [Float] = {
+        let logMin = log10(Float(20.0))
+        let logMax = log10(Float(20000.0))
+        return (0...samplePoints).map { step in
+            let norm = Float(step) / Float(samplePoints)
+            return pow(10.0, logMin + norm * (logMax - logMin))
+        }
+    }()
+
+    @State private var cachedPath: Path = Path()
+    @State private var lastViewSize: CGSize = .zero
 
     public init(
         profile: Binding<EQProfile>,
@@ -31,56 +44,40 @@ public struct EQCurveView: View {
     public var body: some View {
         GeometryReader { geo in
             ZStack {
-                // 1. Dark Studio Background & Grid
+                // 1. Terminal Canvas Grid & Frequency Scales
                 Canvas { context, size in
                     drawGrid(context: context, size: size)
-                    drawOctaveBands(context: context, size: size)
+                    drawOctaveHeader(context: context, size: size)
                 }
 
-                // 2. Real-time Live Audio Spectrum Analyzer Layer
+                // 2. Real-time Discrete RTA Spectrum Analyzer Bars (Hardware Test Instrument Style)
                 if !spectrumDB.isEmpty {
-                    SpectrumShape(spectrumDB: spectrumDB)
-                        .fill(
-                            LinearGradient(
-                                gradient: Gradient(colors: [
-                                    DynaQTheme.cyan.opacity(0.32),
-                                    DynaQTheme.blue.opacity(0.12),
-                                    Color.clear
-                                ]),
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                        )
+                    TerminalSpectrumBars(spectrumDB: spectrumDB)
+                        .padding(.bottom, 22) // Leave room for bottom frequency axis
                 }
 
-                // 3. Composite EQ Response Curve
-                Path { path in
-                    drawCompositeCurve(path: &path, size: geo.size)
-                }
-                .stroke(
-                    LinearGradient(
-                        colors: [DynaQTheme.cyan, DynaQTheme.blue, DynaQTheme.amber],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    ),
-                    style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round)
-                )
-                .shadow(color: DynaQTheme.cyan.opacity(0.35), radius: 6)
+                // 3. Composite EQ Response Curve (Cached Path, Zero Math on Telemetry Ticks)
+                cachedPath
+                    .stroke(
+                        profile.isBypassed ? DynaQTheme.textMuted : DynaQTheme.phosphorGreen,
+                        style: StrokeStyle(lineWidth: 1.5, lineCap: .square, lineJoin: .miter)
+                    )
 
-                // 4. Interactive Draggable Band Nodes with Routing Badges & Tooltips
+                // 4. Interactive Draggable Reticle Nodes
                 ForEach(profile.bands.indices, id: \.self) { index in
                     let band = profile.bands[index]
                     let isSelected = (selectedBandID == band.id)
                     let pt = pointFor(frequency: band.frequency, gainDB: band.gain, size: geo.size)
                     let bandColor = DynaQTheme.bandColors[index % DynaQTheme.bandColors.count]
 
-                    BandNode(
+                    TerminalBandNode(
                         band: band,
                         color: bandColor,
                         isSelected: isSelected,
                         position: pt,
                         onDrag: { newPoint in
                             updateBand(at: index, with: newPoint, size: geo.size)
+                            rebuildCachedPath(size: geo.size)
                         },
                         onSelect: {
                             selectedBandID = band.id
@@ -88,11 +85,21 @@ public struct EQCurveView: View {
                     )
                 }
             }
-            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .background(DynaQTheme.bg)
             .overlay(
-                RoundedRectangle(cornerRadius: 10)
-                    .stroke(DynaQTheme.surfaceBorder, lineWidth: 1)
+                Rectangle().stroke(DynaQTheme.surfaceBorder, lineWidth: 1)
             )
+            .onAppear {
+                lastViewSize = geo.size
+                rebuildCachedPath(size: geo.size)
+            }
+            .onChange(of: geo.size) { _, newSize in
+                lastViewSize = newSize
+                rebuildCachedPath(size: newSize)
+            }
+            .onChange(of: profile) { _, _ in
+                rebuildCachedPath(size: lastViewSize)
+            }
         }
     }
 
@@ -139,16 +146,55 @@ public struct EQCurveView: View {
         profile.bands[index] = band
     }
 
+    // MARK: - High Performance Curve Cache Builder
+
+    private func rebuildCachedPath(size: CGSize) {
+        guard size.width > 10, size.height > 10 else { return }
+
+        let activeBands = profile.bands.filter { $0.isEnabled }
+
+        // Compute filter coefficients ONCE per active band (8 calculations instead of 1128!)
+        let activeCoeffs = activeBands.map { band in
+            BiquadCoefficients.calculate(
+                type: band.filterType,
+                frequency: band.frequency,
+                gainDB: band.gain,
+                q: band.q,
+                sampleRate: sampleRate
+            )
+        }
+
+        var path = Path()
+        let freqs = Self.sampleFrequencies
+
+        for i in 0..<freqs.count {
+            let f = freqs[i]
+            var totalDB: Float = profile.preampGain + profile.masterGain
+
+            for c in activeCoeffs {
+                totalDB += c.magnitudeResponse(at: f, sampleRate: sampleRate)
+            }
+
+            let pt = pointFor(frequency: f, gainDB: totalDB, size: size)
+            if i == 0 {
+                path.move(to: pt)
+            } else {
+                path.addLine(to: pt)
+            }
+        }
+
+        self.cachedPath = path
+    }
+
     // MARK: - Drawing Routines
 
-    private func drawOctaveBands(context: GraphicsContext, size: CGSize) {
-        // Octave labels along the top edge
+    private func drawOctaveHeader(context: GraphicsContext, size: CGSize) {
         let octaves: [(label: String, startF: Float, endF: Float)] = [
             ("SUB", 20, 60),
             ("BASS", 60, 250),
-            ("LOW MID", 250, 500),
+            ("LOW-MID", 250, 500),
             ("MID", 500, 2000),
-            ("HIGH MID", 2000, 4000),
+            ("HIGH-MID", 2000, 4000),
             ("PRESENCE", 4000, 6000),
             ("BRILLIANCE", 6000, 20000)
         ]
@@ -159,10 +205,10 @@ public struct EQCurveView: View {
             let midX = (xStart + xEnd) * 0.5
 
             context.draw(
-                Text(oct.label)
+                Text("[ \(oct.label) ]")
                     .font(.system(size: 8, weight: .bold, design: .monospaced))
-                    .foregroundColor(DynaQTheme.textMuted.opacity(0.7)),
-                at: CGPoint(x: midX, y: 12)
+                    .foregroundColor(DynaQTheme.textMuted.opacity(0.8)),
+                at: CGPoint(x: midX, y: 10)
             )
         }
     }
@@ -173,13 +219,15 @@ public struct EQCurveView: View {
         for f in gridFrequencies {
             let x = xFor(frequency: f, width: size.width)
             var path = Path()
-            path.move(to: CGPoint(x: x, y: 20))
-            path.addLine(to: CGPoint(x: x, y: size.height))
+            path.move(to: CGPoint(x: x, y: 18))
+            path.addLine(to: CGPoint(x: x, y: size.height - 20))
             context.stroke(path, with: .color(DynaQTheme.gridLine), lineWidth: 1)
 
             let label = f >= 1000 ? "\(Int(f / 1000))k" : "\(Int(f))"
             context.draw(
-                Text(label).font(.system(size: 8, weight: .semibold, design: .monospaced)).foregroundColor(DynaQTheme.gridText),
+                Text(label)
+                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                    .foregroundColor(DynaQTheme.gridText),
                 at: CGPoint(x: x, y: size.height - 10)
             )
         }
@@ -194,54 +242,53 @@ public struct EQCurveView: View {
             let isZero = (db == 0)
             context.stroke(
                 path,
-                with: .color(isZero ? DynaQTheme.textSecondary.opacity(0.3) : DynaQTheme.gridLine),
+                with: .color(isZero ? DynaQTheme.gridLineZero : DynaQTheme.gridLine),
                 lineWidth: isZero ? 1.5 : 1
             )
 
             let label = db > 0 ? "+\(Int(db))" : "\(Int(db))"
             context.draw(
-                Text(label).font(.system(size: 8, weight: .semibold, design: .monospaced)).foregroundColor(DynaQTheme.gridText),
-                at: CGPoint(x: 16, y: y - 6)
+                Text("\(label) dB")
+                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                    .foregroundColor(isZero ? DynaQTheme.textSecondary : DynaQTheme.gridText),
+                at: CGPoint(x: 22, y: y - 6)
             )
-        }
-    }
-
-    private func drawCompositeCurve(path: inout Path, size: CGSize) {
-        let samplePoints = 140
-        let logMin = log10(minFreq)
-        let logMax = log10(maxFreq)
-
-        let activeBands = profile.bands.filter { $0.isEnabled }
-
-        for step in 0...samplePoints {
-            let norm = Float(step) / Float(samplePoints)
-            let freq = pow(10.0, logMin + norm * (logMax - logMin))
-
-            var totalDB: Float = 0.0
-            for band in activeBands {
-                let coeffs = BiquadCoefficients.calculate(
-                    type: band.filterType,
-                    frequency: band.frequency,
-                    gainDB: band.gain,
-                    q: band.q,
-                    sampleRate: sampleRate
-                )
-                totalDB += coeffs.magnitudeResponse(at: freq, sampleRate: sampleRate)
-            }
-
-            let pt = pointFor(frequency: freq, gainDB: totalDB, size: size)
-            if step == 0 {
-                path.move(to: pt)
-            } else {
-                path.addLine(to: pt)
-            }
         }
     }
 }
 
-// MARK: - Draggable Band Handle with Tooltip
+// MARK: - Discrete RTA Spectrum Bars (Hardware Test Instrument Aesthetic)
 
-private struct BandNode: View {
+private struct TerminalSpectrumBars: View {
+    let spectrumDB: [Float]
+
+    var body: some View {
+        GeometryReader { geo in
+            let barCount = spectrumDB.count
+            let spacing: CGFloat = 1.0
+            let totalSpacing = spacing * CGFloat(max(barCount - 1, 0))
+            let barWidth = max((geo.size.width - totalSpacing) / CGFloat(barCount), 1.0)
+
+            HStack(alignment: .bottom, spacing: spacing) {
+                ForEach(0..<barCount, id: \.self) { i in
+                    let db = spectrumDB[i]
+                    // Map -80 dB ... 0 dB to 0 ... 1
+                    let norm = CGFloat(min(max((db + 80.0) / 80.0, 0.0), 1.0))
+                    let barH = max(geo.size.height * norm, 1.0)
+
+                    Rectangle()
+                        .fill(DynaQTheme.phosphorGreen.opacity(0.32))
+                        .frame(width: barWidth, height: barH)
+                }
+            }
+            .frame(maxHeight: .infinity, alignment: .bottom)
+        }
+    }
+}
+
+// MARK: - Draggable Terminal Reticle Node
+
+private struct TerminalBandNode: View {
     let band: EQBand
     let color: Color
     let isSelected: Bool
@@ -253,50 +300,49 @@ private struct BandNode: View {
 
     var body: some View {
         ZStack {
-            // Live Floating Tooltip when dragged or selected
+            // Live Monospace Reticle Tooltip
             if isSelected || isDragging {
                 VStack(spacing: 2) {
-                    Text("\(band.formattedFrequency) • \(band.formattedGain)")
+                    Text("[ BAND \(String(format: "%02d", band.index + 1)) // \(band.formattedFrequency) // \(band.formattedGain) ]")
                         .font(.system(size: 9, weight: .bold, design: .monospaced))
-                        .foregroundColor(.white)
-                    Text("\(band.filterType.shortName) | \(band.routing.shortBadge)")
-                        .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                        .foregroundColor(DynaQTheme.textPrimary)
+                    Text("\(band.filterType.shortName) | \(band.routing.shortBadge) | Q:\(String(format: "%.2f", band.q))")
+                        .font(.system(size: 8, weight: .bold, design: .monospaced))
                         .foregroundColor(color)
                 }
                 .padding(.horizontal, 6)
                 .padding(.vertical, 3)
-                .background(DynaQTheme.surface.opacity(0.95))
-                .cornerRadius(4)
+                .background(DynaQTheme.surfaceElevated)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 4)
-                        .stroke(color.opacity(0.5), lineWidth: 1)
+                    Rectangle().stroke(color, lineWidth: 1)
                 )
-                .offset(y: -28)
+                .offset(y: -32)
             }
 
-            // Glow halo when selected
+            // Crosshair tick lines when selected
             if isSelected {
-                Circle()
-                    .stroke(color.opacity(0.4), lineWidth: 6)
-                    .frame(width: 32, height: 32)
+                Group {
+                    Rectangle().fill(color.opacity(0.7)).frame(width: 24, height: 1)
+                    Rectangle().fill(color.opacity(0.7)).frame(width: 1, height: 24)
+                }
             }
 
-            // Outer node border
-            Circle()
+            // Reticle square box
+            Rectangle()
                 .fill(DynaQTheme.surface)
-                .frame(width: 22, height: 22)
+                .frame(width: 18, height: 18)
                 .overlay(
-                    Circle().stroke(color, lineWidth: isSelected ? 2.5 : 1.5)
+                    Rectangle().stroke(color, lineWidth: isSelected ? 2.0 : 1.0)
                 )
 
-            // Center band index & routing badge
+            // Monospace Band Index Digit
             Text("\(band.index + 1)")
                 .font(.system(size: 9, weight: .heavy, design: .monospaced))
                 .foregroundColor(isSelected ? Color.white : color)
         }
         .position(position)
         .gesture(
-            DragGesture()
+            DragGesture(minimumDistance: 1)
                 .onChanged { gesture in
                     isDragging = true
                     onSelect()
@@ -309,30 +355,5 @@ private struct BandNode: View {
         .onTapGesture {
             onSelect()
         }
-    }
-}
-
-// MARK: - Spectrum Wave Shape
-
-private struct SpectrumShape: Shape {
-    let spectrumDB: [Float]
-
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        guard !spectrumDB.isEmpty else { return path }
-
-        path.move(to: CGPoint(x: 0, y: rect.height))
-
-        let stepX = rect.width / CGFloat(max(spectrumDB.count - 1, 1))
-        for (i, db) in spectrumDB.enumerated() {
-            let x = CGFloat(i) * stepX
-            let norm = CGFloat(min(max((db + 80.0) / 80.0, 0.0), 1.0))
-            let y = rect.height - norm * rect.height
-            path.addLine(to: CGPoint(x: x, y: y))
-        }
-
-        path.addLine(to: CGPoint(x: rect.width, y: rect.height))
-        path.closeSubpath()
-        return path
     }
 }

@@ -1,7 +1,8 @@
 import SwiftUI
 import DynaQCore
 
-/// Preset browser and manager.
+/// Terminal Preset Browser and Manager.
+/// Brutalist aesthetic: monospace typography, sharp 1px borders, compact preset navigation.
 public struct PresetPickerView: View {
     @Binding public var currentProfile: EQProfile
     public let presets: [EQProfile]
@@ -24,10 +25,10 @@ public struct PresetPickerView: View {
     }
 
     public var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 6) {
             Menu {
                 ForEach(Dictionary(grouping: presets, by: { $0.category }).sorted(by: { $0.key < $1.key }), id: \.key) { category, items in
-                    Section(header: Text(category)) {
+                    Section(header: Text(category.uppercased())) {
                         ForEach(items) { preset in
                             Button(action: {
                                 onSelectPreset(preset)
@@ -43,25 +44,29 @@ public struct PresetPickerView: View {
                     }
                 }
             } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "slider.horizontal.3")
-                        .foregroundColor(DynaQTheme.cyan)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(currentProfile.name)
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundColor(DynaQTheme.textPrimary)
-                        Text(currentProfile.category.uppercased())
-                            .font(.system(size: 8, weight: .bold, design: .monospaced))
-                            .foregroundColor(DynaQTheme.textMuted)
-                    }
+                HStack(spacing: 6) {
+                    Text("PRESET:")
+                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                        .foregroundColor(DynaQTheme.textMuted)
+
+                    Text("[ \(currentProfile.name) ]")
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundColor(DynaQTheme.textPrimary)
+
+                    Text(currentProfile.category.uppercased())
+                        .font(.system(size: 7, weight: .bold, design: .monospaced))
+                        .foregroundColor(DynaQTheme.terminalCyan)
+
                     Image(systemName: "chevron.up.chevron.down")
-                        .font(.system(size: 9))
-                        .foregroundColor(DynaQTheme.textSecondary)
+                        .font(.system(size: 7))
+                        .foregroundColor(DynaQTheme.textMuted)
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
                 .background(DynaQTheme.surfaceElevated)
-                .cornerRadius(6)
+                .overlay(
+                    Rectangle().stroke(DynaQTheme.surfaceBorder, lineWidth: 1)
+                )
             }
             .menuStyle(.borderlessButton)
 
@@ -70,41 +75,55 @@ public struct PresetPickerView: View {
                 customPresetName = "\(currentProfile.name) (Custom)"
                 showingSaveSheet = true
             }) {
-                Image(systemName: "square.and.arrow.down")
-                    .font(.system(size: 11))
-                    .padding(8)
+                Text("[ SAVE ]")
+                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 5)
                     .background(DynaQTheme.surfaceElevated)
                     .foregroundColor(DynaQTheme.textSecondary)
-                    .cornerRadius(6)
+                    .overlay(
+                        Rectangle().stroke(DynaQTheme.surfaceBorder, lineWidth: 1)
+                    )
             }
             .buttonStyle(.plain)
             .popover(isPresented: $showingSaveSheet) {
-                VStack(spacing: 12) {
-                    Text("Save Custom Preset")
-                        .font(.headline)
+                VStack(spacing: 10) {
+                    Text("// SAVE CUSTOM PRESET")
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
                         .foregroundColor(DynaQTheme.textPrimary)
 
                     TextField("Preset Name", text: $customPresetName)
-                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                        .textFieldStyle(.plain)
+                        .padding(6)
+                        .background(DynaQTheme.surface)
+                        .overlay(
+                            Rectangle().stroke(DynaQTheme.surfaceBorder, lineWidth: 1)
+                        )
+                        .font(.system(size: 11, design: .monospaced))
                         .frame(width: 220)
 
-                    HStack {
-                        Button("Cancel") {
+                    HStack(spacing: 8) {
+                        Button("[ CANCEL ]") {
                             showingSaveSheet = false
                         }
-                        .keyboardShortcut(.cancelAction)
+                        .buttonStyle(.plain)
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .foregroundColor(DynaQTheme.textMuted)
 
-                        Button("Save") {
+                        Spacer()
+
+                        Button("[ CONFIRM SAVE ]") {
                             onSaveCustom(customPresetName)
                             showingSaveSheet = false
                         }
-                        .keyboardShortcut(.defaultAction)
+                        .buttonStyle(.plain)
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .foregroundColor(DynaQTheme.phosphorGreen)
                     }
                 }
-                .padding()
-                .background(DynaQTheme.surface)
+                .padding(12)
+                .background(DynaQTheme.surfaceElevated)
             }
         }
     }
 }
-

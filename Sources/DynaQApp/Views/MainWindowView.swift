@@ -5,6 +5,7 @@ import DynaQUI
 import DynaQAudioDriver
 
 /// Main Studio Window interface for dynaQ.
+/// Minimal Brutalist Terminal Aesthetic: monospace typography, sharp 1px borders, zero neon glow or bubbles.
 public struct MainWindowView: View {
     @ObservedObject var state = AppState.shared
     @State private var showAppRouting = false
@@ -12,34 +13,35 @@ public struct MainWindowView: View {
     public init() {}
 
     public var body: some View {
-        VStack(spacing: 10) {
-            // Header Bar: Studio Branding, Preset, and Hardware I/O
-            HStack(spacing: 12) {
-                // Logo & Engine Power Switch
-                HStack(spacing: 8) {
-                    Button(action: {
-                        state.toggleEnginePower()
-                    }) {
-                        HStack(spacing: 6) {
-                            Circle()
-                                .fill(state.isEngineOnline ? DynaQTheme.green : DynaQTheme.red)
-                                .frame(width: 8, height: 8)
-                                .shadow(color: state.isEngineOnline ? DynaQTheme.green : .clear, radius: 4)
+        VStack(spacing: 8) {
+            // Header Bar: Studio Branding, Power Switch, Preset, and Hardware I/O
+            HStack(spacing: 10) {
+                // Engine Power Switch & System Status
+                Button(action: {
+                    state.toggleEnginePower()
+                }) {
+                    HStack(spacing: 6) {
+                        Rectangle()
+                            .fill(state.isEngineOnline ? DynaQTheme.phosphorGreen : DynaQTheme.terminalRed)
+                            .frame(width: 6, height: 14)
 
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text("dynaQ")
-                                    .font(.system(size: 14, weight: .black, design: .monospaced))
-                                    .foregroundColor(DynaQTheme.textPrimary)
-                                Text(state.isEngineOnline ? "LIVE I/O" : "STANDBY")
-                                    .font(.system(size: 7, weight: .heavy, design: .monospaced))
-                                    .foregroundColor(state.isEngineOnline ? DynaQTheme.green : DynaQTheme.textMuted)
-                            }
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text("DYNAQ")
+                                .font(.system(size: 13, weight: .heavy, design: .monospaced))
+                                .foregroundColor(DynaQTheme.textPrimary)
+                            Text(state.isEngineOnline ? "ONLINE // 48kHz" : "STANDBY")
+                                .font(.system(size: 7, weight: .bold, design: .monospaced))
+                                .foregroundColor(state.isEngineOnline ? DynaQTheme.phosphorGreen : DynaQTheme.textMuted)
                         }
                     }
-                    .buttonStyle(.plain)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 4)
+                    .background(DynaQTheme.surfaceElevated)
+                    .overlay(
+                        Rectangle().stroke(state.isEngineOnline ? DynaQTheme.phosphorGreen.opacity(0.6) : DynaQTheme.surfaceBorder, lineWidth: 1)
+                    )
                 }
-
-                Divider().background(DynaQTheme.surfaceBorder).frame(height: 22)
+                .buttonStyle(.plain)
 
                 // Preset Selector
                 PresetPickerView(
@@ -75,25 +77,24 @@ public struct MainWindowView: View {
 
                 // Per-App Routing Drawer Toggle
                 Button(action: {
-                    withAnimation(.easeInOut(duration: 0.2)) {
+                    withAnimation(.easeInOut(duration: 0.15)) {
                         showAppRouting.toggle()
                     }
                 }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "square.stack.3d.forward.dottedline")
-                        Text("APPS")
-                            .font(.system(size: 9, weight: .bold, design: .monospaced))
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .background(showAppRouting ? DynaQTheme.cyan.opacity(0.2) : DynaQTheme.surfaceElevated)
-                    .foregroundColor(showAppRouting ? DynaQTheme.cyan : DynaQTheme.textSecondary)
-                    .cornerRadius(5)
+                    Text(showAppRouting ? "[ APPS: CLOSE ]" : "[ APPS ]")
+                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 5)
+                        .background(showAppRouting ? DynaQTheme.terminalCyan.opacity(0.15) : DynaQTheme.surfaceElevated)
+                        .foregroundColor(showAppRouting ? DynaQTheme.terminalCyan : DynaQTheme.textSecondary)
+                        .overlay(
+                            Rectangle().stroke(showAppRouting ? DynaQTheme.terminalCyan : DynaQTheme.surfaceBorder, lineWidth: 1)
+                        )
                 }
                 .buttonStyle(.plain)
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 12)
+            .padding(.horizontal, 12)
+            .padding(.top, 10)
 
             // Primary Interactive Parametric EQ Curve & Live Spectrum Visualizer
             EQCurveView(
@@ -105,8 +106,8 @@ public struct MainWindowView: View {
                 spectrumDB: state.spectrumDB,
                 sampleRate: Float(state.selectedOutputDevice?.currentSampleRate ?? 48000.0)
             )
-            .frame(minHeight: 270)
-            .padding(.horizontal, 16)
+            .frame(minHeight: 280)
+            .padding(.horizontal, 12)
 
             // Selected Band Parameter Inspector, M/S Routing & Dynamic EQ
             EQBandInspectorView(
@@ -116,7 +117,7 @@ public struct MainWindowView: View {
                 ),
                 selectedBandID: $state.selectedBandID
             )
-            .padding(.horizontal, 16)
+            .padding(.horizontal, 12)
 
             // Per-App Routing Drawer (Collapsible)
             if showAppRouting {
@@ -124,11 +125,11 @@ public struct MainWindowView: View {
                     routes: $state.appRoutes,
                     availableProfiles: state.presets
                 )
-                .padding(.horizontal, 16)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .padding(.horizontal, 12)
+                .transition(.opacity)
             }
 
-            // Master Section (Preamp, Master, Phase Invert, Limiter, A/B Compare, VU Meters)
+            // Master Section (Preamp, Master, Phase Invert, Limiter, A/B Compare, Segmented VU Meters)
             MasterSectionView(
                 profile: Binding(
                     get: { state.currentProfile },
@@ -146,10 +147,28 @@ public struct MainWindowView: View {
                     state.resetClip()
                 }
             )
-            .padding(.horizontal, 16)
-            .padding(.bottom, 12)
+            .padding(.horizontal, 12)
+
+            // Terminal Status Bar
+            HStack(spacing: 8) {
+                let appStr = state.selectedAudioApp?.name ?? "System Audio"
+                let outStr = state.selectedOutputDevice?.name ?? "Default Output"
+                let srStr = String(format: "%.0f Hz", state.selectedOutputDevice?.currentSampleRate ?? 48000.0)
+
+                Text("// ROUTE: [ \(appStr.uppercased()) ] ➔ [ \(outStr.uppercased()) (\(srStr)) ]")
+                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                    .foregroundColor(DynaQTheme.textMuted)
+
+                Spacer()
+
+                Text("// BUFFER: \(state.selectedBufferSize) SPLS  |  LATENCY: \(String(format: "%.1f", state.roundtripLatencyMs))ms  |  DSP: \(state.currentProfile.isBypassed ? "BYPASSED" : "ACTIVE")")
+                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                    .foregroundColor(DynaQTheme.textMuted)
+            }
+            .padding(.horizontal, 14)
+            .padding(.bottom, 8)
         }
-        .frame(minWidth: 920, minHeight: 680)
+        .frame(minWidth: 980, minHeight: 640)
         .background(DynaQTheme.bg)
     }
 }

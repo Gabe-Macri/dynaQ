@@ -3,6 +3,7 @@ import DynaQCore
 import DynaQDSP
 
 /// Detailed inspector and editor for the selected equalizer band.
+/// Minimal Brutalist Terminal Aesthetic: monospace typography, sharp 1px borders, precision parameter scrubbing.
 public struct EQBandInspectorView: View {
     @Binding public var profile: EQProfile
     @Binding public var selectedBandID: UUID?
@@ -17,9 +18,9 @@ public struct EQBandInspectorView: View {
     }
 
     public var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 8) {
             // Band Selection Strip
-            HStack(spacing: 6) {
+            HStack(spacing: 4) {
                 ForEach(profile.bands.indices, id: \.self) { idx in
                     let band = profile.bands[idx]
                     let isSelected = (band.id == selectedBandID)
@@ -29,22 +30,21 @@ public struct EQBandInspectorView: View {
                         selectedBandID = band.id
                     }) {
                         HStack(spacing: 4) {
-                            Circle()
+                            Rectangle()
                                 .fill(band.isEnabled ? bandColor : DynaQTheme.textMuted)
-                                .frame(width: 6, height: 6)
-                            Text("\(idx + 1)")
-                                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                .frame(width: 4, height: 10)
+                            Text(String(format: "%02d", idx + 1))
+                                .font(.system(size: 10, weight: .bold, design: .monospaced))
                             Text(band.routing.shortBadge)
-                                .font(.system(size: 8, weight: .heavy, design: .monospaced))
-                                .foregroundColor(bandColor.opacity(0.8))
+                                .font(.system(size: 7, weight: .heavy, design: .monospaced))
+                                .foregroundColor(bandColor)
                         }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 5)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 4)
                         .background(isSelected ? DynaQTheme.surfaceElevated : DynaQTheme.surface)
                         .foregroundColor(isSelected ? DynaQTheme.textPrimary : DynaQTheme.textSecondary)
-                        .cornerRadius(6)
                         .overlay(
-                            RoundedRectangle(cornerRadius: 6)
+                            Rectangle()
                                 .stroke(isSelected ? bandColor : DynaQTheme.surfaceBorder, lineWidth: 1)
                         )
                     }
@@ -56,24 +56,25 @@ public struct EQBandInspectorView: View {
                 // Add Band button
                 Button(action: addBand) {
                     HStack(spacing: 4) {
-                        Image(systemName: "plus")
+                        Text("+")
+                            .font(.system(size: 10, weight: .bold, design: .monospaced))
                         Text("BAND")
+                            .font(.system(size: 8, weight: .bold, design: .monospaced))
                     }
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 4)
                     .background(DynaQTheme.surface)
                     .foregroundColor(DynaQTheme.textSecondary)
-                    .cornerRadius(6)
                     .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(DynaQTheme.surfaceBorder, lineWidth: 1)
+                        Rectangle().stroke(DynaQTheme.surfaceBorder, lineWidth: 1)
                     )
                 }
                 .buttonStyle(.plain)
             }
 
-            Divider().background(DynaQTheme.surfaceBorder)
+            Rectangle()
+                .fill(DynaQTheme.surfaceBorder)
+                .frame(height: 1)
 
             // Inspector Controls for Selected Band
             if let idx = selectedIndex {
@@ -81,30 +82,32 @@ public struct EQBandInspectorView: View {
                 let band = profile.bands[idx]
                 let color = DynaQTheme.bandColors[idx % DynaQTheme.bandColors.count]
 
-                HStack(alignment: .top, spacing: 18) {
-                    // Left Column: Filter Shape & Channel Routing
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack(spacing: 10) {
+                HStack(alignment: .top, spacing: 14) {
+                    // Left Column: Filter Shape, Channel Routing, Knobs
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 8) {
                             // Filter Type Menu
                             Menu {
                                 ForEach(FilterType.allCases) { type in
                                     Button(action: { bandBinding.wrappedValue.filterType = type }) {
-                                        Label(type.rawValue, systemImage: type.sfSymbol)
+                                        Text(type.rawValue.uppercased())
                                     }
                                 }
                             } label: {
-                                HStack(spacing: 6) {
-                                    Image(systemName: band.filterType.sfSymbol)
+                                HStack(spacing: 4) {
+                                    Text("TYPE: [ \(band.filterType.shortName.uppercased()) ]")
+                                        .font(.system(size: 9, weight: .bold, design: .monospaced))
                                         .foregroundColor(color)
-                                    Text(band.filterType.shortName)
-                                        .font(.system(size: 11, weight: .semibold))
                                     Image(systemName: "chevron.up.chevron.down")
-                                        .font(.system(size: 8))
+                                        .font(.system(size: 7))
+                                        .foregroundColor(DynaQTheme.textMuted)
                                 }
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 5)
-                                .background(DynaQTheme.surface)
-                                .cornerRadius(5)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 4)
+                                .background(DynaQTheme.surfaceElevated)
+                                .overlay(
+                                    Rectangle().stroke(DynaQTheme.surfaceBorder, lineWidth: 1)
+                                )
                             }
                             .menuStyle(.borderlessButton)
 
@@ -112,21 +115,24 @@ public struct EQBandInspectorView: View {
                             Menu {
                                 ForEach(BandRouting.allCases) { route in
                                     Button(action: { bandBinding.wrappedValue.routing = route }) {
-                                        Text(route.rawValue)
+                                        Text(route.rawValue.uppercased())
                                     }
                                 }
                             } label: {
                                 HStack(spacing: 4) {
-                                    Text(band.routing.rawValue)
-                                        .font(.system(size: 10, weight: .bold, design: .monospaced))
-                                        .foregroundColor(DynaQTheme.cyan)
+                                    Text("ROUTE: [ \(band.routing.rawValue.uppercased()) ]")
+                                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                        .foregroundColor(DynaQTheme.terminalCyan)
                                     Image(systemName: "chevron.up.chevron.down")
-                                        .font(.system(size: 8))
+                                        .font(.system(size: 7))
+                                        .foregroundColor(DynaQTheme.textMuted)
                                 }
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 5)
-                                .background(DynaQTheme.surface)
-                                .cornerRadius(5)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 4)
+                                .background(DynaQTheme.surfaceElevated)
+                                .overlay(
+                                    Rectangle().stroke(DynaQTheme.surfaceBorder, lineWidth: 1)
+                                )
                             }
                             .menuStyle(.borderlessButton)
 
@@ -136,36 +142,55 @@ public struct EQBandInspectorView: View {
                             Button(action: {
                                 bandBinding.wrappedValue.isSolo.toggle()
                             }) {
-                                Text("SOLO")
-                                    .font(.system(size: 9, weight: .heavy, design: .monospaced))
-                                    .padding(.horizontal, 7)
+                                Text("[ SOLO ]")
+                                    .font(.system(size: 8, weight: .heavy, design: .monospaced))
+                                    .padding(.horizontal, 6)
                                     .padding(.vertical, 4)
-                                    .background(band.isSolo ? DynaQTheme.amber : DynaQTheme.surface)
-                                    .foregroundColor(band.isSolo ? .black : DynaQTheme.textSecondary)
-                                    .cornerRadius(4)
+                                    .background(band.isSolo ? DynaQTheme.phosphorAmber : DynaQTheme.surfaceElevated)
+                                    .foregroundColor(band.isSolo ? .black : DynaQTheme.textMuted)
+                                    .overlay(
+                                        Rectangle().stroke(band.isSolo ? DynaQTheme.phosphorAmber : DynaQTheme.surfaceBorder, lineWidth: 1)
+                                    )
                             }
                             .buttonStyle(.plain)
 
-                            // Power Toggle
-                            Toggle("", isOn: bandBinding.isEnabled)
-                                .toggleStyle(SwitchToggleStyle(tint: color))
-                                .labelsHidden()
+                            // Power/Bypass Toggle
+                            Button(action: {
+                                bandBinding.wrappedValue.isEnabled.toggle()
+                            }) {
+                                Text(band.isEnabled ? "[ ON ]" : "[ BYPASS ]")
+                                    .font(.system(size: 8, weight: .heavy, design: .monospaced))
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 4)
+                                    .background(band.isEnabled ? color.opacity(0.15) : DynaQTheme.surfaceElevated)
+                                    .foregroundColor(band.isEnabled ? color : DynaQTheme.textMuted)
+                                    .overlay(
+                                        Rectangle().stroke(band.isEnabled ? color : DynaQTheme.surfaceBorder, lineWidth: 1)
+                                    )
+                            }
+                            .buttonStyle(.plain)
 
                             // Delete Band
                             if profile.bands.count > 1 {
                                 Button(action: { removeBand(at: idx) }) {
-                                    Image(systemName: "trash")
-                                        .font(.system(size: 10))
+                                    Text("[ DEL ]")
+                                        .font(.system(size: 8, weight: .bold, design: .monospaced))
                                         .foregroundColor(DynaQTheme.textMuted)
+                                        .padding(.horizontal, 5)
+                                        .padding(.vertical, 4)
+                                        .background(DynaQTheme.surfaceElevated)
+                                        .overlay(
+                                            Rectangle().stroke(DynaQTheme.surfaceBorder, lineWidth: 1)
+                                        )
                                 }
                                 .buttonStyle(.plain)
                             }
                         }
 
-                        // Knobs with numeric readouts
-                        HStack(spacing: 16) {
+                        // Terminal Precision Knobs
+                        HStack(spacing: 8) {
                             RotaryKnob(
-                                title: "Freq",
+                                title: "Frequency",
                                 value: bandBinding.frequency,
                                 range: 20...20000,
                                 defaultValue: 1000.0,
@@ -199,35 +224,43 @@ public struct EQBandInspectorView: View {
                     // Right Column: Dynamic EQ Section
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
-                            Image(systemName: "waveform.badge.magnifyingglass")
-                                .foregroundColor(band.isDynamic ? DynaQTheme.amber : DynaQTheme.textMuted)
-                                .font(.system(size: 10))
-                            Text("DYNAMIC EQ")
-                                .font(.system(size: 9, weight: .bold, design: .monospaced))
-                                .foregroundColor(band.isDynamic ? DynaQTheme.textPrimary : DynaQTheme.textMuted)
+                            Text("// DYNAMIC EQ MODULE")
+                                .font(.system(size: 8, weight: .heavy, design: .monospaced))
+                                .foregroundColor(band.isDynamic ? DynaQTheme.phosphorAmber : DynaQTheme.textMuted)
                             Spacer()
-                            Toggle("", isOn: bandBinding.isDynamic)
-                                .toggleStyle(SwitchToggleStyle(tint: DynaQTheme.amber))
-                                .labelsHidden()
+                            Button(action: {
+                                bandBinding.wrappedValue.isDynamic.toggle()
+                            }) {
+                                Text(band.isDynamic ? "[ ACTIVE ]" : "[ OFF ]")
+                                    .font(.system(size: 8, weight: .heavy, design: .monospaced))
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(band.isDynamic ? DynaQTheme.phosphorAmber : DynaQTheme.surfaceElevated)
+                                    .foregroundColor(band.isDynamic ? .black : DynaQTheme.textMuted)
+                                    .overlay(
+                                        Rectangle().stroke(band.isDynamic ? DynaQTheme.phosphorAmber : DynaQTheme.surfaceBorder, lineWidth: 1)
+                                    )
+                            }
+                            .buttonStyle(.plain)
                         }
 
                         if band.isDynamic {
-                            HStack(spacing: 10) {
+                            HStack(spacing: 6) {
                                 RotaryKnob(
-                                    title: "Thresh",
+                                    title: "Threshold",
                                     value: bandBinding.dynamicThreshold,
                                     range: -60...0,
                                     defaultValue: -18.0,
                                     unit: "dB",
-                                    tintColor: DynaQTheme.amber
+                                    tintColor: DynaQTheme.phosphorAmber
                                 )
                                 RotaryKnob(
-                                    title: "Range",
+                                    title: "Dyn Range",
                                     value: bandBinding.dynamicRange,
                                     range: -18...18,
                                     defaultValue: -6.0,
                                     unit: "dB",
-                                    tintColor: DynaQTheme.amber
+                                    tintColor: DynaQTheme.phosphorAmber
                                 )
                                 RotaryKnob(
                                     title: "Ratio",
@@ -235,29 +268,29 @@ public struct EQBandInspectorView: View {
                                     range: 1.0...10.0,
                                     defaultValue: 2.0,
                                     unit: ":1",
-                                    tintColor: DynaQTheme.amber
+                                    tintColor: DynaQTheme.phosphorAmber
                                 )
                             }
                         } else {
-                            Text("Automatic gain modulation reacting to audio transients above threshold.")
-                                .font(.system(size: 10))
+                            Text("Automatic transient gain modulation reacting in real time to peaks above threshold.")
+                                .font(.system(size: 9, design: .monospaced))
                                 .foregroundColor(DynaQTheme.textMuted)
-                                .padding(.top, 4)
+                                .padding(.top, 6)
                         }
                     }
                     .padding(8)
-                    .background(DynaQTheme.surfaceElevated.opacity(0.6))
-                    .cornerRadius(7)
-                    .frame(width: 240)
+                    .background(DynaQTheme.surfaceElevated)
+                    .overlay(
+                        Rectangle().stroke(DynaQTheme.surfaceBorder, lineWidth: 1)
+                    )
+                    .frame(width: 234)
                 }
             }
         }
-        .padding(12)
+        .padding(8)
         .background(DynaQTheme.surface)
-        .cornerRadius(10)
         .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(DynaQTheme.surfaceBorder, lineWidth: 1)
+            Rectangle().stroke(DynaQTheme.surfaceBorder, lineWidth: 1)
         )
     }
 

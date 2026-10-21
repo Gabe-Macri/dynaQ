@@ -1,39 +1,48 @@
 import SwiftUI
 
-/// Unified Dark Pro Studio Theme for dynaQ.
+/// Minimal Brutalist Terminal Studio Theme for dynaQ.
+/// Strict professional aesthetic: monospace typography, sharp 1px borders, phosphor accents, zero bubbles or neon glow.
 public enum DynaQTheme {
-    public static let bg = Color(red: 0.07, green: 0.08, blue: 0.10)
-    public static let surface = Color(red: 0.11, green: 0.12, blue: 0.15)
-    public static let surfaceElevated = Color(red: 0.15, green: 0.17, blue: 0.21)
-    public static let surfaceBorder = Color(red: 0.22, green: 0.24, blue: 0.28)
+    // Canvas & Chassis
+    public static let bg = Color(red: 0.04, green: 0.05, blue: 0.06)             // #0A0D10 Pure console black
+    public static let surface = Color(red: 0.08, green: 0.09, blue: 0.11)        // #14171C Terminal card
+    public static let surfaceElevated = Color(red: 0.12, green: 0.13, blue: 0.16)// #1F2229 Elevated cell
+    public static let surfaceBorder = Color(red: 0.18, green: 0.20, blue: 0.24)  // #2E333D Crisp 1px border
+    public static let surfaceBorderActive = Color(red: 0.32, green: 0.36, blue: 0.44) // Active focus border
 
-    // Accents
-    public static let cyan = Color(red: 0.05, green: 0.82, blue: 0.95)
-    public static let blue = Color(red: 0.25, green: 0.55, blue: 1.0)
-    public static let amber = Color(red: 1.0, green: 0.68, blue: 0.20)
-    public static let green = Color(red: 0.22, green: 0.88, blue: 0.45)
-    public static let red = Color(red: 0.96, green: 0.22, blue: 0.26)
-    public static let purple = Color(red: 0.72, green: 0.35, blue: 0.98)
+    // Terminal CRT Phosphors & Indicators
+    public static let phosphorGreen = Color(red: 0.22, green: 0.95, blue: 0.45)  // #38F273 CRT Phosphor Green
+    public static let phosphorAmber = Color(red: 1.00, green: 0.70, blue: 0.18)  // #FFB32E Amber Warning / Solo
+    public static let terminalCyan = Color(red: 0.20, green: 0.82, blue: 0.92)   // #33D1EB Precision Slate Cyan
+    public static let terminalRed = Color(red: 1.00, green: 0.23, blue: 0.23)    // #FF3B3B Peak / Clip / Bypass
+    public static let terminalBlue = Color(red: 0.29, green: 0.56, blue: 0.98)   // #4A8FFA Hardware Transport
 
-    // Text
-    public static let textPrimary = Color(white: 0.96)
-    public static let textSecondary = Color(white: 0.62)
+    // Aliases for compatibility
+    public static let green = phosphorGreen
+    public static let amber = phosphorAmber
+    public static let cyan = terminalCyan
+    public static let red = terminalRed
+    public static let blue = terminalBlue
+
+    // Monospace Text Hierarchy
+    public static let textPrimary = Color(white: 0.94)
+    public static let textSecondary = Color(white: 0.64)
     public static let textMuted = Color(white: 0.38)
 
-    // Grid
+    // Measurement & Grid
     public static let gridLine = Color.white.opacity(0.06)
-    public static let gridText = Color.white.opacity(0.35)
+    public static let gridLineZero = Color.white.opacity(0.18)
+    public static let gridText = Color(white: 0.45)
 
-    // Band colors for multi-band visual distinction
+    // Industrial Band Colors (high contrast, distinct, zero neon glow)
     public static let bandColors: [Color] = [
-        Color(red: 0.95, green: 0.35, blue: 0.35), // Red / Sub
-        Color(red: 1.0, green: 0.60, blue: 0.20),  // Orange / Bass
-        Color(red: 0.95, green: 0.85, blue: 0.25), // Yellow / Low-Mid
-        Color(red: 0.25, green: 0.85, blue: 0.50), // Green / Mid
-        Color(red: 0.15, green: 0.80, blue: 0.95), // Cyan / High-Mid
-        Color(red: 0.40, green: 0.55, blue: 1.00), // Blue / Presence
-        Color(red: 0.75, green: 0.40, blue: 0.95), // Purple / Brilliance
-        Color(red: 0.95, green: 0.40, blue: 0.75), // Magenta / Air
+        Color(red: 0.90, green: 0.35, blue: 0.35), // 01 Sub (Muted Crimson)
+        Color(red: 0.95, green: 0.55, blue: 0.22), // 02 Bass (Warm Amber)
+        Color(red: 0.90, green: 0.76, blue: 0.22), // 03 Low-Mid (Brass Gold)
+        Color(red: 0.22, green: 0.85, blue: 0.45), // 04 Mid (CRT Green)
+        Color(red: 0.18, green: 0.77, blue: 0.85), // 05 High-Mid (Teal)
+        Color(red: 0.29, green: 0.53, blue: 0.97), // 06 Presence (Cobalt)
+        Color(red: 0.62, green: 0.41, blue: 0.95), // 07 Brilliance (Violet)
+        Color(red: 0.85, green: 0.32, blue: 0.62)  // 08 Air (Magenta)
     ]
 }
-

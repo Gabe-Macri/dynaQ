@@ -4,48 +4,51 @@ import os.lock
 import DynaQCore
 import DynaQDSP
 
-/// High-performance thread-safe stereo ring buffer for real-time audio sample streaming.
+/// High-performance thread-safe stereo ring buffer with power-of-two mask for zero-allocation streaming.
 public final class AudioRingBuffer: @unchecked Sendable {
     private var leftBuffer: [Float]
     private var rightBuffer: [Float]
-    private let capacity: Int
+    private let capacity: Int = 65536
+    private let mask: Int = 65535
     private var writeHead: Int = 0
     private var readHead: Int = 0
     private var availableFrames: Int = 0
     private var lock = os_unfair_lock_s()
 
-    public init(capacity: Int = 65536) {
-        self.capacity = capacity
-        self.leftBuffer = [Float](repeating: 0.0, count: capacity)
-        self.rightBuffer = [Float](repeating: 0.0, count: capacity)
+    public init() {
+        self.leftBuffer = [Float](repeating: 0.0, count: 65536)
+        self.rightBuffer = [Float](repeating: 0.0, count: 65536)
     }
 
+    @inline(__always)
     public func write(left: UnsafePointer<Float>, right: UnsafePointer<Float>, count: Int) {
         os_unfair_lock_lock(&lock)
-        defer { os_unfair_lock_unlock(&lock) }
-
         let framesToWrite = min(count, capacity - availableFrames)
+        var w = writeHead
         for i in 0..<framesToWrite {
-            leftBuffer[writeHead] = left[i]
-            rightBuffer[writeHead] = right[i]
-            writeHead = (writeHead + 1) % capacity
+            leftBuffer[w] = left[i]
+            rightBuffer[w] = right[i]
+            w = (w + 1) & mask
         }
-        availableFrames = min(availableFrames + framesToWrite, capacity)
+        writeHead = w
+        availableFrames += framesToWrite
+        os_unfair_lock_unlock(&lock)
     }
 
+    @inline(__always)
     public func read(left: UnsafeMutablePointer<Float>, right: UnsafeMutablePointer<Float>, count: Int) -> Int {
         os_unfair_lock_lock(&lock)
-        defer { os_unfair_lock_unlock(&lock) }
-
         let framesToRead = min(count, availableFrames)
+        var r = readHead
         for i in 0..<framesToRead {
-            left[i] = leftBuffer[readHead]
-            right[i] = rightBuffer[readHead]
-            readHead = (readHead + 1) % capacity
+            left[i] = leftBuffer[r]
+            right[i] = rightBuffer[r]
+            r = (r + 1) & mask
         }
+        readHead = r
         availableFrames -= framesToRead
+        os_unfair_lock_unlock(&lock)
 
-        // Zero-fill remaining if buffer underrun
         if framesToRead < count {
             for i in framesToRead..<count {
                 left[i] = 0.0
@@ -57,18 +60,14 @@ public final class AudioRingBuffer: @unchecked Sendable {
 
     public func reset() {
         os_unfair_lock_lock(&lock)
-        defer { os_unfair_lock_unlock(&lock) }
         writeHead = 0
         readHead = 0
         availableFrames = 0
-        leftBuffer.fill(with: 0.0)
-        rightBuffer.fill(with: 0.0)
-    }
-}
-
-private extension Array where Element == Float {
-    mutating func fill(with value: Float) {
-        for i in 0..<count { self[i] = value }
+        for i in 0..<capacity {
+            leftBuffer[i] = 0.0
+            rightBuffer[i] = 0.0
+        }
+        os_unfair_lock_unlock(&lock)
     }
 }
 
@@ -89,7 +88,7 @@ public final class AudioEngineManager: @unchecked Sendable {
 
     private var outputIOProcID: AudioDeviceIOProcID? = nil
     private var inputHardwareIOProcID: AudioDeviceIOProcID? = nil
-    private let ringBuffer = AudioRingBuffer(capacity: 65536)
+    private let ringBuffer = AudioRingBuffer()
 
     private var isRunning = false
     private let lock = NSLock()
@@ -102,7 +101,15 @@ public final class AudioEngineManager: @unchecked Sendable {
     public var feedbackProtectionEnabled: Bool = true
     public var isMuted: Bool = false
 
-    // Real-time telemetry callbacks
+    // Real-time telemetry: buffered for low-overhead display timer
+    private var latestMeter: AudioMeter = .silent
+    private var meterLock = os_unfair_lock_s()
+
+    // Pre-allocated real-time scratch buffers (zero heap alloc on audio thread)
+    private var monoScratch = [Float](repeating: 0.0, count: 8192)
+    private var leftScratch = [Float](repeating: 0.0, count: 8192)
+    private var rightScratch = [Float](repeating: 0.0, count: 8192)
+
     public var onMeterUpdate: ((AudioMeter) -> Void)?
     public var onSpectrumUpdate: (([Float]) -> Void)?
     public var onLatencyUpdate: ((Double) -> Void)?
@@ -138,13 +145,12 @@ public final class AudioEngineManager: @unchecked Sendable {
         self.activeOutputID = outputID
         self.activeInputID = inputID
 
-        // 1. Query hardware format & buffer sizes
         self.currentSampleRate = CoreAudioManager.shared.fetchAllDevices().first(where: { $0.id == outputID })?.currentSampleRate ?? 48000.0
         self.currentBufferFrames = CoreAudioManager.shared.getBufferFrameSize(deviceID: outputID)
         eqEngine.setSampleRate(Float(currentSampleRate))
         ringBuffer.reset()
 
-        // 2. Connect Capture Source (System Audio Tap or Hardware Mic)
+        // 1. Connect Capture Source (System Audio Tap or Hardware Mic)
         if captureSource == .systemAudio {
             if #available(macOS 14.2, *) {
                 let tap = SystemAudioTap.shared
@@ -157,7 +163,6 @@ public final class AudioEngineManager: @unchecked Sendable {
                 throw NSError(domain: "dynaQ.AudioEngine", code: 2, userInfo: [NSLocalizedDescriptionKey: "System Audio Tapping requires macOS 14.2 or later."])
             }
         } else {
-            // Hardware Input mode via CoreAudio HAL IOProc
             var procID: AudioDeviceIOProcID? = nil
             let inStatus = AudioDeviceCreateIOProcID(inputID, { (_, _, inputData, _, _, _, clientData) -> OSStatus in
                 guard let clientData = clientData else { return noErr }
@@ -193,7 +198,7 @@ public final class AudioEngineManager: @unchecked Sendable {
             AudioDeviceStart(inputID, validInProc)
         }
 
-        // 3. Attach Real-Time Output IOProc directly to the physical hardware device (AirPods, Speakers, DAC)
+        // 2. Attach Real-Time Output IOProc directly to the physical hardware device
         var outProcID: AudioDeviceIOProcID? = nil
         let outStatus = AudioDeviceCreateIOProcID(outputID, { (_, _, _, _, outputData, _, clientData) -> OSStatus in
             guard let clientData = clientData else { return noErr }
@@ -202,7 +207,6 @@ public final class AudioEngineManager: @unchecked Sendable {
             guard let buf = abl.first, let ptr = buf.mData?.assumingMemoryBound(to: Float.self) else { return noErr }
             let frameCount = Int(buf.mDataByteSize) / (Int(buf.mNumberChannels) * MemoryLayout<Float>.size)
 
-            // Feedback guard check
             let isSpeaker = manager.isBuiltInSpeaker(deviceID: manager.activeOutputID)
             let isMic = manager.isBuiltInMic(deviceID: manager.activeInputID)
             let muteFeedback = manager.captureSource == .hardwareInput && manager.feedbackProtectionEnabled && isSpeaker && isMic
@@ -215,39 +219,50 @@ public final class AudioEngineManager: @unchecked Sendable {
             }
 
             if abl.count >= 2, let rPtr = abl[1].mData?.assumingMemoryBound(to: Float.self) {
-                // Non-interleaved (Stereo)
                 _ = manager.ringBuffer.read(left: ptr, right: rPtr, count: frameCount)
                 manager.eqEngine.processStereo(left: ptr, right: rPtr, count: frameCount)
                 manager.limiter.processStereo(left: ptr, right: rPtr, count: frameCount)
 
-                // Telemetry
-                var mono = [Float](repeating: 0.0, count: frameCount)
-                for i in 0..<frameCount { mono[i] = (ptr[i] + rPtr[i]) * 0.5 }
-                mono.withUnsafeBufferPointer { mPtr in manager.analyzer.feed(samples: mPtr.baseAddress!, count: frameCount) }
+                // Fast analyzer feed (downmix using scratch buffer)
+                let countToProcess = min(frameCount, 8192)
+                manager.monoScratch.withUnsafeMutableBufferPointer { mPtr in
+                    for i in 0..<countToProcess {
+                        mPtr[i] = (ptr[i] + rPtr[i]) * 0.5
+                    }
+                    manager.analyzer.feed(samples: mPtr.baseAddress!, count: countToProcess)
+                }
+
+                // Measure loudness into local state (NO main-thread dispatch from audio thread!)
                 let meter = manager.loudnessMeter.processStereo(left: ptr, right: rPtr, count: frameCount)
-                manager.onMeterUpdate?(meter)
+                os_unfair_lock_lock(&manager.meterLock)
+                manager.latestMeter = meter
+                os_unfair_lock_unlock(&manager.meterLock)
 
             } else if buf.mNumberChannels >= 2 {
-                // Interleaved (Stereo)
-                var left = [Float](repeating: 0.0, count: frameCount)
-                var right = [Float](repeating: 0.0, count: frameCount)
-                _ = manager.ringBuffer.read(left: &left, right: &right, count: frameCount)
+                let countToProcess = min(frameCount, 8192)
+                manager.leftScratch.withUnsafeMutableBufferPointer { lPtr in
+                    manager.rightScratch.withUnsafeMutableBufferPointer { rPtr in
+                        _ = manager.ringBuffer.read(left: lPtr.baseAddress!, right: rPtr.baseAddress!, count: countToProcess)
 
-                left.withUnsafeMutableBufferPointer { lPtr in
-                    right.withUnsafeMutableBufferPointer { rPtr in
-                        manager.eqEngine.processStereo(left: lPtr.baseAddress!, right: rPtr.baseAddress!, count: frameCount)
-                        manager.limiter.processStereo(left: lPtr.baseAddress!, right: rPtr.baseAddress!, count: frameCount)
+                        manager.eqEngine.processStereo(left: lPtr.baseAddress!, right: rPtr.baseAddress!, count: countToProcess)
+                        manager.limiter.processStereo(left: lPtr.baseAddress!, right: rPtr.baseAddress!, count: countToProcess)
 
-                        for i in 0..<frameCount {
+                        for i in 0..<countToProcess {
                             ptr[i * 2] = lPtr[i]
                             ptr[i * 2 + 1] = rPtr[i]
                         }
 
-                        var mono = [Float](repeating: 0.0, count: frameCount)
-                        for i in 0..<frameCount { mono[i] = (lPtr[i] + rPtr[i]) * 0.5 }
-                        mono.withUnsafeBufferPointer { mPtr in manager.analyzer.feed(samples: mPtr.baseAddress!, count: frameCount) }
-                        let meter = manager.loudnessMeter.processStereo(left: lPtr.baseAddress!, right: rPtr.baseAddress!, count: frameCount)
-                        manager.onMeterUpdate?(meter)
+                        manager.monoScratch.withUnsafeMutableBufferPointer { mPtr in
+                            for i in 0..<countToProcess {
+                                mPtr[i] = (lPtr[i] + rPtr[i]) * 0.5
+                            }
+                            manager.analyzer.feed(samples: mPtr.baseAddress!, count: countToProcess)
+                        }
+
+                        let meter = manager.loudnessMeter.processStereo(left: lPtr.baseAddress!, right: rPtr.baseAddress!, count: countToProcess)
+                        os_unfair_lock_lock(&manager.meterLock)
+                        manager.latestMeter = meter
+                        os_unfair_lock_unlock(&manager.meterLock)
                     }
                 }
             }
@@ -361,11 +376,18 @@ public final class AudioEngineManager: @unchecked Sendable {
         return dev?.transportType == .builtIn && dev?.isInput == true
     }
 
+    /// Smooth, optimized 30fps display refresh timer (batches metering + spectrum to main thread).
     private func startTelemetryTimer() {
         telemetryTimer?.invalidate()
-        telemetryTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+        telemetryTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
             guard let self = self else { return }
+            os_unfair_lock_lock(&self.meterLock)
+            let meter = self.latestMeter
+            os_unfair_lock_unlock(&self.meterLock)
+
             let spectrum = self.analyzer.getSpectrumDB()
+
+            self.onMeterUpdate?(meter)
             self.onSpectrumUpdate?(spectrum)
         }
     }

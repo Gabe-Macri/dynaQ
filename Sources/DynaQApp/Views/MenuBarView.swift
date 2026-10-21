@@ -4,6 +4,7 @@ import DynaQDSP
 import DynaQUI
 
 /// Compact Menu Bar view for quick status and preset switching.
+/// Minimal Terminal Style: monospace typography, sharp 1px borders, compact rack telemetry.
 public struct MenuBarView: View {
     @ObservedObject var state = AppState.shared
     public let onOpenMainWindow: () -> Void
@@ -13,57 +14,51 @@ public struct MenuBarView: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            // Header
+        VStack(alignment: .leading, spacing: 8) {
+            // Terminal Header
             HStack {
-                Text("dynaQ")
-                    .font(.system(size: 13, weight: .black, design: .monospaced))
-                    .foregroundColor(DynaQTheme.cyan)
+                Text("// DYNAQ DSP")
+                    .font(.system(size: 11, weight: .black, design: .monospaced))
+                    .foregroundColor(DynaQTheme.terminalCyan)
                 Spacer()
-                Text(state.currentProfile.isBypassed ? "BYPASS" : "ACTIVE")
-                    .font(.system(size: 9, weight: .bold, design: .monospaced))
-                    .padding(.horizontal, 6)
+                Text(state.currentProfile.isBypassed ? "[ BYPASSED ]" : "[ ONLINE ]")
+                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                    .padding(.horizontal, 5)
                     .padding(.vertical, 2)
-                    .background(state.currentProfile.isBypassed ? DynaQTheme.red : DynaQTheme.green)
-                    .foregroundColor(.white)
-                    .cornerRadius(4)
+                    .background(state.currentProfile.isBypassed ? DynaQTheme.terminalRed : DynaQTheme.phosphorGreen.opacity(0.2))
+                    .foregroundColor(state.currentProfile.isBypassed ? .white : DynaQTheme.phosphorGreen)
+                    .overlay(
+                        Rectangle().stroke(state.currentProfile.isBypassed ? DynaQTheme.terminalRed : DynaQTheme.phosphorGreen, lineWidth: 1)
+                    )
             }
 
-            Divider().background(DynaQTheme.surfaceBorder)
+            Rectangle().fill(DynaQTheme.surfaceBorder).frame(height: 1)
 
             // Current Hardware I/O Summary
-            VStack(alignment: .leading, spacing: 3) {
-                HStack {
-                    Image(systemName: "mic.fill")
-                        .font(.system(size: 9))
-                        .foregroundColor(DynaQTheme.blue)
-                    Text(state.selectedInputDevice?.name ?? "Default Input")
-                        .font(.system(size: 10, weight: .medium))
-                        .lineLimit(1)
-                }
-                HStack {
-                    Image(systemName: "speaker.wave.2.fill")
-                        .font(.system(size: 9))
-                        .foregroundColor(DynaQTheme.cyan)
-                    Text(state.selectedOutputDevice?.name ?? "Default Output")
-                        .font(.system(size: 10, weight: .medium))
-                        .lineLimit(1)
-                }
+            VStack(alignment: .leading, spacing: 2) {
+                Text("ROUTE:")
+                    .font(.system(size: 7, weight: .bold, design: .monospaced))
+                    .foregroundColor(DynaQTheme.textMuted)
+                Text("\(state.selectedAudioApp?.name ?? "System Audio") ➔ \(state.selectedOutputDevice?.name ?? "Default Output")")
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .foregroundColor(DynaQTheme.textPrimary)
+                    .lineLimit(1)
+
                 Text(String(format: "%.0f Hz • %d spls • %.1f ms latency",
                             state.selectedOutputDevice?.currentSampleRate ?? 48000.0,
                             state.selectedBufferSize,
                             state.roundtripLatencyMs))
-                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                    .font(.system(size: 8, design: .monospaced))
                     .foregroundColor(DynaQTheme.textMuted)
-                    .padding(.top, 2)
+                    .padding(.top, 1)
             }
 
-            Divider().background(DynaQTheme.surfaceBorder)
+            Rectangle().fill(DynaQTheme.surfaceBorder).frame(height: 1)
 
             // Quick Preset Selection
-            VStack(alignment: .leading, spacing: 4) {
-                Text("ACTIVE PRESET")
-                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+            VStack(alignment: .leading, spacing: 3) {
+                Text("// PRESETS")
+                    .font(.system(size: 8, weight: .bold, design: .monospaced))
                     .foregroundColor(DynaQTheme.textMuted)
 
                 ForEach(state.presets.prefix(5)) { preset in
@@ -71,46 +66,59 @@ public struct MenuBarView: View {
                         state.selectPreset(preset)
                     }) {
                         HStack {
-                            Text(preset.name)
-                                .font(.system(size: 11))
+                            Text(preset.name.uppercased())
+                                .font(.system(size: 9, weight: .bold, design: .monospaced))
                             Spacer()
                             if preset.id == state.currentProfile.id {
-                                Image(systemName: "checkmark")
-                                    .font(.system(size: 9))
-                                    .foregroundColor(DynaQTheme.cyan)
+                                Text("[ACTIVE]")
+                                    .font(.system(size: 7, weight: .heavy, design: .monospaced))
+                                    .foregroundColor(DynaQTheme.phosphorGreen)
                             }
                         }
                         .padding(.vertical, 3)
-                        .padding(.horizontal, 6)
+                        .padding(.horizontal, 5)
                         .background(preset.id == state.currentProfile.id ? DynaQTheme.surfaceElevated : Color.clear)
-                        .cornerRadius(4)
+                        .foregroundColor(preset.id == state.currentProfile.id ? DynaQTheme.textPrimary : DynaQTheme.textSecondary)
+                        .overlay(
+                            Rectangle().stroke(preset.id == state.currentProfile.id ? DynaQTheme.surfaceBorderActive : Color.clear, lineWidth: 1)
+                        )
                     }
                     .buttonStyle(.plain)
                 }
             }
 
-            Divider().background(DynaQTheme.surfaceBorder)
+            Rectangle().fill(DynaQTheme.surfaceBorder).frame(height: 1)
 
             // Actions
             HStack {
-                Button("Open Studio UI") {
-                    onOpenMainWindow()
+                Button(action: onOpenMainWindow) {
+                    Text("[ OPEN STUDIO UI ]")
+                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 4)
+                        .background(DynaQTheme.surfaceElevated)
+                        .foregroundColor(DynaQTheme.terminalCyan)
+                        .overlay(
+                            Rectangle().stroke(DynaQTheme.terminalCyan, lineWidth: 1)
+                        )
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
+                .buttonStyle(.plain)
 
                 Spacer()
 
-                Button("Quit") {
+                Button("[ QUIT ]") {
                     NSApplication.shared.terminate(nil)
                 }
                 .buttonStyle(.plain)
-                .font(.system(size: 11))
+                .font(.system(size: 8, weight: .bold, design: .monospaced))
                 .foregroundColor(DynaQTheme.textMuted)
             }
         }
-        .padding(12)
-        .frame(width: 270)
+        .padding(10)
+        .frame(width: 280)
         .background(DynaQTheme.bg)
+        .overlay(
+            Rectangle().stroke(DynaQTheme.surfaceBorder, lineWidth: 1)
+        )
     }
 }

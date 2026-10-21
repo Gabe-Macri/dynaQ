@@ -91,21 +91,15 @@ public final class AppState: ObservableObject {
 
     private func setupAudioEngineBindings() {
         engineManager.onMeterUpdate = { [weak self] meter in
-            DispatchQueue.main.async {
-                self?.currentMeter = meter
-            }
+            self?.currentMeter = meter
         }
 
         engineManager.onSpectrumUpdate = { [weak self] spectrum in
-            DispatchQueue.main.async {
-                self?.spectrumDB = spectrum
-            }
+            self?.spectrumDB = spectrum
         }
 
         engineManager.onLatencyUpdate = { [weak self] lat in
-            DispatchQueue.main.async {
-                self?.roundtripLatencyMs = lat
-            }
+            self?.roundtripLatencyMs = lat
         }
 
         coreAudioManager.onDevicesChanged = { [weak self] devs in

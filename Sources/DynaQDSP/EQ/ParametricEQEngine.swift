@@ -15,13 +15,29 @@ public final class ParametricEQEngine: @unchecked Sendable {
     private var midScratch: [Float] = []
     private var sideScratch: [Float] = []
 
+    // Precomputed curve cache for zero-lag UI rendering
+    private var cachedCurve: [Float] = []
+    private let cachedPointsCount = 128
+    private var cachedFrequencies: [Float] = []
+
     // Preamp and Master linear factors
     private var preampLinear: Float = 1.0
     private var masterLinear: Float = 1.0
 
-    public init(profile: EQProfile = DefaultPresets.studioFlat, sampleRate: Float = 48000.0) {
+    public init(profile: EQProfile = DefaultPresets.harmanHeadphoneTarget, sampleRate: Float = 48000.0) {
         self.profile = profile
         self.sampleRate = max(sampleRate, 8000.0)
+
+        // Precompute fixed logarithmically spaced frequencies
+        let logMin = log10(Float(20.0))
+        let logMax = log10(Float(20000.0))
+        var freqs = [Float](repeating: 0.0, count: cachedPointsCount)
+        for i in 0..<cachedPointsCount {
+            let norm = Float(i) / Float(cachedPointsCount - 1)
+            freqs[i] = pow(10.0, logMin + norm * (logMax - logMin))
+        }
+        self.cachedFrequencies = freqs
+
         rebuildEngine()
     }
 
@@ -31,6 +47,7 @@ public final class ParametricEQEngine: @unchecked Sendable {
         defer { lock.unlock() }
         self.sampleRate = max(newRate, 8000.0)
         recalculateAllCoefficients(immediate: true)
+        updateCurveCache()
     }
 
     /// Updates the current EQ profile.
@@ -56,6 +73,7 @@ public final class ParametricEQEngine: @unchecked Sendable {
         if let index = profile.bands.firstIndex(where: { $0.id == band.id }) {
             profile.bands[index] = band
             updateBandCoefficients(index: index, immediate: false)
+            updateCurveCache()
         }
     }
 
@@ -67,6 +85,7 @@ public final class ParametricEQEngine: @unchecked Sendable {
         profile.masterGain = masterDB
         preampLinear = pow(10.0, preampDB / 20.0)
         masterLinear = pow(10.0, masterDB / 20.0)
+        updateCurveCache()
     }
 
     /// Set bypass mode.
@@ -74,6 +93,13 @@ public final class ParametricEQEngine: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         profile.isBypassed = bypassed
+    }
+
+    /// Returns the precalculated 128-point frequency response curve for instant zero-lag UI rendering.
+    public func getCachedCurve() -> [Float] {
+        lock.lock()
+        defer { lock.unlock() }
+        return cachedCurve
     }
 
     // MARK: - Internal Engine Setup
@@ -88,6 +114,7 @@ public final class ParametricEQEngine: @unchecked Sendable {
         for i in 0..<profile.bands.count {
             updateBandCoefficients(index: i, immediate: true)
         }
+        updateCurveCache()
     }
 
     private func recalculateAllCoefficients(immediate: Bool) {
@@ -118,6 +145,26 @@ public final class ParametricEQEngine: @unchecked Sendable {
         filter.setCoefficients(coeffs, immediate: immediate)
     }
 
+    private func updateCurveCache() {
+        let activeBands = profile.bands.filter { $0.isEnabled }
+        let currentSR = sampleRate
+        var totalDB = [Float](repeating: 0.0, count: cachedFrequencies.count)
+
+        for band in activeBands {
+            let coeffs = BiquadCoefficients.calculate(
+                type: band.filterType,
+                frequency: band.frequency,
+                gainDB: band.gain,
+                q: band.q,
+                sampleRate: currentSR
+            )
+            for i in 0..<cachedFrequencies.count {
+                totalDB[i] += coeffs.magnitudeResponse(at: cachedFrequencies[i], sampleRate: currentSR)
+            }
+        }
+        self.cachedCurve = totalDB
+    }
+
     // MARK: - Real-time Audio Processing
 
     public func processStereo(
@@ -135,7 +182,6 @@ public final class ParametricEQEngine: @unchecked Sendable {
         let mMode = profile.monitorMode
         lock.unlock()
 
-        // Ensure scratch buffers capacity
         if midScratch.count < count {
             midScratch = [Float](repeating: 0.0, count: count)
             sideScratch = [Float](repeating: 0.0, count: count)
@@ -148,7 +194,7 @@ public final class ParametricEQEngine: @unchecked Sendable {
             vDSP_vsmul(right, 1, &factor, right, 1, vDSP_Length(count))
         }
 
-        // 2. Process Cascade of Biquad Filter Bands with M/S and Channel Routing
+        // 2. Multi-band filtering
         for i in 0..<bandFilters.count {
             let filter = bandFilters[i]
             guard !filter.isBypassed else { continue }
@@ -171,7 +217,6 @@ public final class ParametricEQEngine: @unchecked Sendable {
                 }
             }
 
-            // Route processing based on band mode
             switch band.routing {
             case .stereo:
                 filter.process(buffer: left, count: count, channel: 0)
@@ -184,23 +229,16 @@ public final class ParametricEQEngine: @unchecked Sendable {
                 filter.process(buffer: right, count: count, channel: 1)
 
             case .mid:
-                // Mid = (L + R) * 0.5, Side = (L - R) * 0.5
                 midScratch.withUnsafeMutableBufferPointer { mPtr in
                     sideScratch.withUnsafeMutableBufferPointer { sPtr in
                         for n in 0..<count {
-                            let l = left[n]
-                            let r = right[n]
-                            mPtr[n] = (l + r) * 0.5
-                            sPtr[n] = (l - r) * 0.5
+                            mPtr[n] = (left[n] + right[n]) * 0.5
+                            sPtr[n] = (left[n] - right[n]) * 0.5
                         }
-                        // Filter only the Mid component
                         filter.process(buffer: mPtr.baseAddress!, count: count, channel: 0)
-                        // Reconstruct L = M + S, R = M - S
                         for n in 0..<count {
-                            let m = mPtr[n]
-                            let s = sPtr[n]
-                            left[n] = m + s
-                            right[n] = m - s
+                            left[n] = mPtr[n] + sPtr[n]
+                            right[n] = mPtr[n] - sPtr[n]
                         }
                     }
                 }
@@ -209,19 +247,13 @@ public final class ParametricEQEngine: @unchecked Sendable {
                 midScratch.withUnsafeMutableBufferPointer { mPtr in
                     sideScratch.withUnsafeMutableBufferPointer { sPtr in
                         for n in 0..<count {
-                            let l = left[n]
-                            let r = right[n]
-                            mPtr[n] = (l + r) * 0.5
-                            sPtr[n] = (l - r) * 0.5
+                            mPtr[n] = (left[n] + right[n]) * 0.5
+                            sPtr[n] = (left[n] - right[n]) * 0.5
                         }
-                        // Filter only the Side component
                         filter.process(buffer: sPtr.baseAddress!, count: count, channel: 1)
-                        // Reconstruct L = M + S, R = M - S
                         for n in 0..<count {
-                            let m = mPtr[n]
-                            let s = sPtr[n]
-                            left[n] = m + s
-                            right[n] = m - s
+                            left[n] = mPtr[n] + sPtr[n]
+                            right[n] = mPtr[n] - sPtr[n]
                         }
                     }
                 }
@@ -271,13 +303,11 @@ public final class ParametricEQEngine: @unchecked Sendable {
 
     // MARK: - Frequency Curve Evaluation (For UI Visualization)
 
-    /// Computes composite magnitude response in dB across all enabled bands at arbitrary frequencies.
     public func evaluateCompositeResponse(at frequencies: [Float]) -> [Float] {
         lock.lock()
+        defer { lock.unlock() }
         let activeBands = profile.bands.filter { $0.isEnabled }
         let currentSR = sampleRate
-        lock.unlock()
-
         var totalDB = [Float](repeating: 0.0, count: frequencies.count)
 
         for band in activeBands {
