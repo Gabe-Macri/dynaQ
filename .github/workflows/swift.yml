@@ -8,6 +8,12 @@ on:
       - 'LICENSE'
       - '.gitignore'
       - 'docs/**'
+      - 'docker/**'
+      - 'Formula/**'
+      - 'Casks/**'
+      - 'Dockerfile'
+      - 'docker-compose.yml'
+      - '.dockerignore'
   pull_request:
     branches: [ main, master ]
     paths-ignore:
@@ -15,6 +21,12 @@ on:
       - 'LICENSE'
       - '.gitignore'
       - 'docs/**'
+      - 'docker/**'
+      - 'Formula/**'
+      - 'Casks/**'
+      - 'Dockerfile'
+      - 'docker-compose.yml'
+      - '.dockerignore'
 
 # Automatically cancel older runs if a new commit is pushed to the same branch
 concurrency:

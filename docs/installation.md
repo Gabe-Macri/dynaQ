@@ -1,6 +1,97 @@
 # Deployment & Builds
 
-dynaQ can be installed as a pre-packaged disk image installer (`.dmg`) or compiled directly from source using the Swift Package Manager.
+dynaQ provides multiple deployment methods tailored for different workflows:
+- **Homebrew**: Native macOS CLI and Cask package management.
+- **Docker**: Containerized DSP benchmark suite and static documentation server.
+- **Disk Image (DMG)**: Standalone drag-and-drop macOS desktop application.
+- **Source Compilation**: Swift Package Manager build from source.
+
+---
+
+## Homebrew Installation (macOS)
+
+For users who prefer CLI installations and background service management via Homebrew:
+
+### 1. Add the Repository Tap
+```bash
+brew tap Gabe-Macri/dynaq https://github.com/Gabe-Macri/dynaQ
+```
+
+### 2. Install CLI Binaries & Daemon
+Install the compiled `dynaq` CLI and `dynaq-router` binaries:
+
+```bash
+brew install dynaq
+```
+
+This places `dynaq` and `dynaq-router` into your `$PATH` (`/opt/homebrew/bin` on Apple Silicon, `/usr/local/bin` on Intel).
+
+### 3. Background Daemon Management (`brew services`)
+Run the lightweight audio router daemon as a background service managed by `launchd`:
+
+```bash
+# Start background router daemon
+brew services start dynaq
+
+# Check daemon status
+brew services list
+
+# Stop background router daemon
+brew services stop dynaq
+```
+
+### 4. Install Desktop Application via Cask
+To install the graphical `.app` bundle directly into `/Applications`:
+
+```bash
+brew install --cask dynaq
+```
+
+---
+
+## Docker Container Environment
+
+For containerized environments, Linux hosts, and automated CI pipelines, dynaQ provides an Alpine-based Docker package (< 20 MB) containing the compiled C DSP kernel CLI and the documentation server.
+
+### 1. Build the Docker Image
+```bash
+docker build -t dynaq .
+```
+
+### 2. Run DSP Diagnostics & Benchmarks
+```bash
+# Display CLI reference and engine parameters
+docker run --rm dynaq --help
+
+# Run real-time DSP cycle benchmarks (biquads, SPSC ring buffer, limiter)
+docker run --rm dynaq --bench
+
+# Execute mathematical verification tests
+docker run --rm dynaq --verify
+
+# Print audio engine specifications
+docker run --rm dynaq --specs
+```
+
+### 3. Launch Local Documentation Server
+Launch the static documentation web server on port 8080:
+
+```bash
+docker run -d -p 8080:8080 --name dynaq-docs dynaq docs
+```
+
+Navigate to `http://localhost:8080` to access the full technical reference.
+
+### 4. Using Docker Compose
+Alternatively, launch with Docker Compose:
+
+```bash
+# Start documentation server in background
+docker compose up -d dynaq-docs
+
+# Run one-off DSP benchmark
+docker compose run --rm dynaq-cli --bench
+```
 
 ---
 

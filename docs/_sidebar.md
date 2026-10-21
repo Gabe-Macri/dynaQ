@@ -32,6 +32,8 @@
   - [CLI Reference](cli-and-router.md#command-line-reference)
 
 - Deployment & Builds
-  - [Disk Image Installation](installation.md)
+  - [Homebrew Installation](installation.md#homebrew-installation-macos)
+  - [Docker Container](installation.md#docker-container-environment)
+  - [Disk Image Installation](installation.md#installation-via-disk-image-dmg)
   - [Building from Source](installation.md#building-from-source)
   - [Release Packaging Pipeline](installation.md#release-packaging-pipeline)

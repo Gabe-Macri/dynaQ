@@ -1,0 +1,12 @@
+.git
+.github
+.build
+.swiftpm
+dist
+output
+DerivedData
+*.xcodeproj
+*.xcworkspace
+*.swp
+*~
+.DS_Store

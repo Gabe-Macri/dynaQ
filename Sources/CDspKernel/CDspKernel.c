@@ -3,7 +3,48 @@
 #include <string.h>
 #include <math.h>
 #include <stdatomic.h>
+#ifdef __APPLE__
 #include <Accelerate/Accelerate.h>
+#else
+#include <math.h>
+
+// Cross-platform vector arithmetic fallbacks for Linux / Docker container environments
+static inline void vDSP_vsmul(const float* a, int ia, const float* b, float* c, int ic, size_t n) {
+    float s = *b;
+    for (size_t i = 0; i < n; i++) c[i * ic] = a[i * ia] * s;
+}
+
+static inline void vDSP_vasm(const float* a, int ia, const float* b, int ib, const float* c, float* d, int id, size_t n) {
+    float s = *c;
+    for (size_t i = 0; i < n; i++) d[i * id] = (a[i * ia] + b[i * ib]) * s;
+}
+
+static inline void vDSP_vsub(const float* b, int ib, const float* a, int ia, float* c, int ic, size_t n) {
+    for (size_t i = 0; i < n; i++) c[i * ic] = a[i * ia] - b[i * ib];
+}
+
+static inline void vDSP_vadd(const float* a, int ia, const float* b, int ib, float* c, int ic, size_t n) {
+    for (size_t i = 0; i < n; i++) c[i * ic] = a[i * ia] + b[i * ib];
+}
+
+static inline void vDSP_maxmgv(const float* a, int ia, float* c, size_t n) {
+    float max_val = 0.0f;
+    for (size_t i = 0; i < n; i++) {
+        float v = fabsf(a[i * ia]);
+        if (v > max_val) max_val = v;
+    }
+    *c = max_val;
+}
+
+static inline void vDSP_measqv(const float* a, int ia, float* c, size_t n) {
+    float sum_sq = 0.0f;
+    for (size_t i = 0; i < n; i++) {
+        float v = a[i * ia];
+        sum_sq += v * v;
+    }
+    *c = (n > 0) ? (sum_sq / (float)n) : 0.0f;
+}
+#endif
 
 // ============================================================================
 // 1. Lock-Free Atomic Single-Producer Single-Consumer (SPSC) Ring Buffer
@@ -468,12 +509,26 @@ void c_dsp_apply_gain(float* buffer, float gain, size_t count) {
 
 void c_dsp_interleave_stereo(const float* left, const float* right, float* interleaved, size_t count) {
     if (!left || !right || !interleaved || count == 0) return;
+#ifdef __APPLE__
     DSPSplitComplex split = { (float*)left, (float*)right };
     vDSP_ztoc(&split, 1, (DSPComplex*)interleaved, 2, count);
+#else
+    for (size_t i = 0; i < count; i++) {
+        interleaved[2 * i] = left[i];
+        interleaved[2 * i + 1] = right[i];
+    }
+#endif
 }
 
 void c_dsp_deinterleave_stereo(const float* interleaved, float* left, float* right, size_t count) {
     if (!interleaved || !left || !right || count == 0) return;
-    DSPSplitComplex split = { left, right };
+#ifdef __APPLE__
+    DSPSplitComplex split = { (float*)left, (float*)right };
     vDSP_ctoz((const DSPComplex*)interleaved, 2, &split, 1, count);
+#else
+    for (size_t i = 0; i < count; i++) {
+        left[i] = interleaved[2 * i];
+        right[i] = interleaved[2 * i + 1];
+    }
+#endif
 }

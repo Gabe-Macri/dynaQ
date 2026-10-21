@@ -141,10 +141,37 @@ Comprehensive technical documentation is available in the [`docs/`](docs/) direc
 
 ## Production Release & Installation (v1.0.0-beta.1)
 
-### Option A: Install from Disk Image (`.dmg`)
+### Option A: Install via Homebrew (CLI & Background Service)
+```bash
+# Add dynaQ tap
+brew tap Gabe-Macri/dynaq https://github.com/Gabe-Macri/dynaQ
+
+# Install CLI binaries (dynaq and dynaq-router)
+brew install dynaq
+
+# Run audio router backend as a managed background service
+brew services start dynaq
+
+# Or install the graphical desktop app into /Applications
+brew install --cask dynaq
+```
+
+### Option B: Run in Docker (DSP Diagnostics & Docs Server)
+```bash
+# Build lightweight container image (< 20 MB)
+docker build -t dynaq .
+
+# Execute real-time DSP cycle benchmarks
+docker run --rm dynaq --bench
+
+# Launch documentation server on http://localhost:8080
+docker run -d -p 8080:8080 dynaq docs
+```
+
+### Option C: Install from Disk Image (`.dmg`)
 Double-click `output/dynaQ-1.0.0-beta.1.dmg` and drag `dynaQ.app` into `/Applications`.
 
-### Option B: Build Production Release Package from Source
+### Option D: Build Production Release Package from Source
 Run the release packaging pipeline:
 ```bash
 ./scripts/build_release.sh
