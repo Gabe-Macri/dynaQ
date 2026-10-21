@@ -14,6 +14,9 @@ on:
       - 'Dockerfile'
       - 'docker-compose.yml'
       - '.dockerignore'
+      - 'wrangler.toml'
+      - 'worker.js'
+      - '.github/workflows/cloudflare.yml'
   pull_request:
     branches: [ main, master ]
     paths-ignore:
@@ -27,6 +30,9 @@ on:
       - 'Dockerfile'
       - 'docker-compose.yml'
       - '.dockerignore'
+      - 'wrangler.toml'
+      - 'worker.js'
+      - '.github/workflows/cloudflare.yml'
 
 # Automatically cancel older runs if a new commit is pushed to the same branch
 concurrency:

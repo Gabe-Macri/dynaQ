@@ -1,0 +1,9 @@
+#:schema node_modules/wrangler/config-schema.json
+name = "dynaq-docs"
+main = "worker.js"
+compatibility_date = "2024-09-23"
+
+[assets]
+directory = "./docs"
+binding = "ASSETS"
+not_found_handling = "single-page-application"

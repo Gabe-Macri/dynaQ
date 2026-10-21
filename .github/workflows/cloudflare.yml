@@ -1,0 +1,126 @@
+name: Cloudflare Workers CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check-strict-docs:
+    name: Check Strict Docs Changeset
+    runs-on: ubuntu-latest
+    outputs:
+      is_strict_docs: ${{ steps.filter.outputs.is_strict_docs }}
+      changed_files: ${{ steps.filter.outputs.changed_files }}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Evaluate Changed Files
+        id: filter
+        run: |
+          set -e
+
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE_REF="origin/${{ github.base_ref }}"
+            HEAD_REF="HEAD"
+            echo "Evaluating pull request diff against $BASE_REF..."
+            CHANGED_FILES=$(git diff --name-only "$BASE_REF"...$HEAD_REF)
+          else
+            BEFORE="${{ github.event.before }}"
+            if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+              echo "Evaluating commit diff against HEAD~1..."
+              CHANGED_FILES=$(git diff-tree --no-commit-id --name-only -r HEAD)
+            else
+              echo "Evaluating push diff: $BEFORE .. ${{ github.sha }}..."
+              CHANGED_FILES=$(git diff --name-only "$BEFORE" "${{ github.sha }}")
+            fi
+          fi
+
+          echo "=================================================="
+          echo "  CHANGESET EVALUATION"
+          echo "=================================================="
+
+          IS_STRICT="true"
+          TOTAL_COUNT=0
+
+          if [ -z "$CHANGED_FILES" ]; then
+            echo "No changed files detected in this changeset."
+            IS_STRICT="false"
+          else
+            while IFS= read -r file; do
+              [ -z "$file" ] && continue
+              TOTAL_COUNT=$((TOTAL_COUNT + 1))
+              case "$file" in
+                docs/*|wrangler.toml|worker.js|README.md|RELEASE_NOTES.md|.github/workflows/cloudflare.yml)
+                  echo "[DOCS-ALLOWED] $file"
+                  ;;
+                *)
+                  echo "[NON-DOCS/CODE] $file"
+                  IS_STRICT="false"
+                  ;;
+              esac
+            done <<< "$CHANGED_FILES"
+          fi
+
+          echo "--------------------------------------------------"
+          echo "Total files evaluated : $TOTAL_COUNT"
+          echo "Strict docs changeset : $IS_STRICT"
+          echo "=================================================="
+
+          echo "is_strict_docs=$IS_STRICT" >> "$GITHUB_OUTPUT"
+
+  deploy-docs-cloudflare:
+    name: Cloudflare Workers Docs Deploy
+    needs: check-strict-docs
+    if: needs.check-strict-docs.outputs.is_strict_docs == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js Runtime
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Verify Documentation Assets
+        run: |
+          echo "Verifying static documentation structure..."
+          test -f docs/index.html || { echo "Error: docs/index.html not found"; exit 1; }
+          test -f docs/_sidebar.md || { echo "Error: docs/_sidebar.md not found"; exit 1; }
+          test -f docs/README.md || { echo "Error: docs/README.md not found"; exit 1; }
+          test -f wrangler.toml || { echo "Error: wrangler.toml not found"; exit 1; }
+          test -f worker.js || { echo "Error: worker.js not found"; exit 1; }
+          echo "Documentation assets verified successfully."
+
+      - name: Deploy to Cloudflare Workers
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Validate Cloudflare Workers Configuration (Dry-Run)
+        if: env.CLOUDFLARE_API_TOKEN == ''
+        run: |
+          echo "Notice: CLOUDFLARE_API_TOKEN is not configured in repository secrets."
+          echo "Validating Cloudflare Workers bundle and static assets via dry-run..."
+          npx --yes wrangler deploy --dry-run --outdir=dist
+          echo "Cloudflare Workers bundle validation completed successfully."
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
