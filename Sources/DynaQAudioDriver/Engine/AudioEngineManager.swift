@@ -1,5 +1,4 @@
 import Foundation
-import AVFoundation
 import CoreAudio
 import os.lock
 import DynaQCore
@@ -79,7 +78,7 @@ public enum AudioCaptureSource: String, CaseIterable, Sendable {
     case hardwareInput = "Hardware Input (Mic/Interface)"
 }
 
-/// Fully integrated system I/O audio engine routing live system sound and hardware through dynaQ DSP.
+/// Fully integrated system I/O audio engine routing live audio directly through CoreAudio HAL & dynaQ DSP.
 public final class AudioEngineManager: @unchecked Sendable {
     public static let shared = AudioEngineManager()
 
@@ -88,8 +87,8 @@ public final class AudioEngineManager: @unchecked Sendable {
     public let analyzer: SpectrumAnalyzer
     public let loudnessMeter: LoudnessMeter
 
-    private let engine = AVAudioEngine()
-    private var sourceNode: AVAudioSourceNode?
+    private var outputIOProcID: AudioDeviceIOProcID? = nil
+    private var inputHardwareIOProcID: AudioDeviceIOProcID? = nil
     private let ringBuffer = AudioRingBuffer(capacity: 65536)
 
     private var isRunning = false
@@ -99,6 +98,7 @@ public final class AudioEngineManager: @unchecked Sendable {
     public var captureSource: AudioCaptureSource = .systemAudio
     public private(set) var activeInputID: AudioDeviceID?
     public private(set) var activeOutputID: AudioDeviceID?
+    public var selectedTargetProcessID: AudioObjectID? = nil
     public var feedbackProtectionEnabled: Bool = true
     public var isMuted: Bool = false
 
@@ -112,7 +112,7 @@ public final class AudioEngineManager: @unchecked Sendable {
     private var currentBufferFrames: UInt32 = 256
 
     public init() {
-        let initialProfile = DefaultPresets.studioFlat
+        let initialProfile = DefaultPresets.harmanHeadphoneTarget
         self.eqEngine = ParametricEQEngine(profile: initialProfile, sampleRate: 48000.0)
         self.limiter = TruePeakLimiter(ceilingDB: initialProfile.limiterCeiling, isEnabled: initialProfile.isLimiterEnabled)
         self.analyzer = SpectrumAnalyzer(fftSize: 1024, binCount: 64, sampleRate: 48000.0)
@@ -138,119 +138,130 @@ public final class AudioEngineManager: @unchecked Sendable {
         self.activeOutputID = outputID
         self.activeInputID = inputID
 
-        // 1. Assign hardware output device to AVAudioEngine
-        if let outputAU = engine.outputNode.audioUnit {
-            var outDev = outputID
-            AudioUnitSetProperty(
-                outputAU,
-                kAudioOutputUnitProperty_CurrentDevice,
-                kAudioUnitScope_Global,
-                0,
-                &outDev,
-                UInt32(MemoryLayout<AudioDeviceID>.size)
-            )
-        }
-
-        // 2. Query hardware format & buffer sizes
+        // 1. Query hardware format & buffer sizes
         self.currentSampleRate = CoreAudioManager.shared.fetchAllDevices().first(where: { $0.id == outputID })?.currentSampleRate ?? 48000.0
         self.currentBufferFrames = CoreAudioManager.shared.getBufferFrameSize(deviceID: outputID)
         eqEngine.setSampleRate(Float(currentSampleRate))
         ringBuffer.reset()
 
-        // 3. Connect Capture Source (System Audio Tap or Hardware Mic)
+        // 2. Connect Capture Source (System Audio Tap or Hardware Mic)
         if captureSource == .systemAudio {
             if #available(macOS 14.2, *) {
                 let tap = SystemAudioTap.shared
                 tap.onAudioFrames = { [weak self] left, right, count in
                     self?.ringBuffer.write(left: left, right: right, count: count)
                 }
-                try tap.start(muteSystemOutput: false)
+                let targets = selectedTargetProcessID != nil ? [selectedTargetProcessID!] : []
+                try tap.start(targetIDs: targets, muteTargetOutput: true)
             } else {
                 throw NSError(domain: "dynaQ.AudioEngine", code: 2, userInfo: [NSLocalizedDescriptionKey: "System Audio Tapping requires macOS 14.2 or later."])
             }
         } else {
-            // Hardware Input mode
-            if let inputAU = engine.inputNode.audioUnit {
-                var inDev = inputID
-                AudioUnitSetProperty(
-                    inputAU,
-                    kAudioOutputUnitProperty_CurrentDevice,
-                    kAudioUnitScope_Global,
-                    0,
-                    &inDev,
-                    UInt32(MemoryLayout<AudioDeviceID>.size)
-                )
+            // Hardware Input mode via CoreAudio HAL IOProc
+            var procID: AudioDeviceIOProcID? = nil
+            let inStatus = AudioDeviceCreateIOProcID(inputID, { (_, _, inputData, _, _, _, clientData) -> OSStatus in
+                guard let clientData = clientData else { return noErr }
+                let manager = Unmanaged<AudioEngineManager>.fromOpaque(clientData).takeUnretainedValue()
+                let abl = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: inputData))
+                guard let buf = abl.first, let ptr = buf.mData?.assumingMemoryBound(to: Float.self) else { return noErr }
+                let frameCount = Int(buf.mDataByteSize) / (Int(buf.mNumberChannels) * MemoryLayout<Float>.size)
+
+                if abl.count >= 2, let rPtr = abl[1].mData?.assumingMemoryBound(to: Float.self) {
+                    manager.ringBuffer.write(left: ptr, right: rPtr, count: frameCount)
+                } else if buf.mNumberChannels >= 2 {
+                    var l = [Float](repeating: 0.0, count: frameCount)
+                    var r = [Float](repeating: 0.0, count: frameCount)
+                    for i in 0..<frameCount {
+                        l[i] = ptr[i * 2]
+                        r[i] = ptr[i * 2 + 1]
+                    }
+                    l.withUnsafeBufferPointer { lPtr in
+                        r.withUnsafeBufferPointer { rPtr in
+                            manager.ringBuffer.write(left: lPtr.baseAddress!, right: rPtr.baseAddress!, count: frameCount)
+                        }
+                    }
+                } else {
+                    manager.ringBuffer.write(left: ptr, right: ptr, count: frameCount)
+                }
+                return noErr
+            }, Unmanaged.passUnretained(self).toOpaque(), &procID)
+
+            guard inStatus == noErr, let validInProc = procID else {
+                throw NSError(domain: "dynaQ.AudioEngine", code: Int(inStatus), userInfo: [NSLocalizedDescriptionKey: "Failed to connect input hardware IOProc."])
             }
-            let inputFormat = engine.inputNode.inputFormat(forBus: 0)
-            let tapBuffer: AVAudioFrameCount = max(currentBufferFrames, 128)
-            engine.inputNode.installTap(onBus: 0, bufferSize: tapBuffer, format: inputFormat) { [weak self] buffer, _ in
-                guard let self = self, let floatData = buffer.floatChannelData else { return }
-                let frames = Int(buffer.frameLength)
-                let channels = Int(buffer.format.channelCount)
-                let left = floatData[0]
-                let right = channels > 1 ? floatData[1] : floatData[0]
-                self.ringBuffer.write(left: left, right: right, count: frames)
-            }
+            self.inputHardwareIOProcID = validInProc
+            AudioDeviceStart(inputID, validInProc)
         }
 
-        // 4. Create Source Node for live DSP rendering to Output Device
-        let stereoFormat = AVAudioFormat(standardFormatWithSampleRate: currentSampleRate, channels: 2)!
-        let newSourceNode = AVAudioSourceNode(format: stereoFormat) { [weak self] _, _, frameCount, outputData -> OSStatus in
-            guard let self = self else { return noErr }
-            let frames = Int(frameCount)
-            let ablPointer = UnsafeMutableAudioBufferListPointer(outputData)
-            guard ablPointer.count >= 2,
-                  let outLeft = ablPointer[0].mData?.assumingMemoryBound(to: Float.self),
-                  let outRight = ablPointer[1].mData?.assumingMemoryBound(to: Float.self) else {
-                return noErr
-            }
+        // 3. Attach Real-Time Output IOProc directly to the physical hardware device (AirPods, Speakers, DAC)
+        var outProcID: AudioDeviceIOProcID? = nil
+        let outStatus = AudioDeviceCreateIOProcID(outputID, { (_, _, _, _, outputData, _, clientData) -> OSStatus in
+            guard let clientData = clientData else { return noErr }
+            let manager = Unmanaged<AudioEngineManager>.fromOpaque(clientData).takeUnretainedValue()
+            let abl = UnsafeMutableAudioBufferListPointer(outputData)
+            guard let buf = abl.first, let ptr = buf.mData?.assumingMemoryBound(to: Float.self) else { return noErr }
+            let frameCount = Int(buf.mDataByteSize) / (Int(buf.mNumberChannels) * MemoryLayout<Float>.size)
 
-            // Feedback guard check when using mic + speaker
-            let isSpeaker = self.isBuiltInSpeaker(deviceID: self.activeOutputID)
-            let isMic = self.isBuiltInMic(deviceID: self.activeInputID)
-            let muteForFeedback = self.captureSource == .hardwareInput && self.feedbackProtectionEnabled && isSpeaker && isMic
+            // Feedback guard check
+            let isSpeaker = manager.isBuiltInSpeaker(deviceID: manager.activeOutputID)
+            let isMic = manager.isBuiltInMic(deviceID: manager.activeInputID)
+            let muteFeedback = manager.captureSource == .hardwareInput && manager.feedbackProtectionEnabled && isSpeaker && isMic
 
-            if self.isMuted || muteForFeedback {
-                for i in 0..<frames {
-                    outLeft[i] = 0.0
-                    outRight[i] = 0.0
+            if manager.isMuted || muteFeedback {
+                for i in 0..<(frameCount * Int(buf.mNumberChannels)) {
+                    ptr[i] = 0.0
                 }
                 return noErr
             }
 
-            // Pull live frames from ring buffer
-            _ = self.ringBuffer.read(left: outLeft, right: outRight, count: frames)
+            if abl.count >= 2, let rPtr = abl[1].mData?.assumingMemoryBound(to: Float.self) {
+                // Non-interleaved (Stereo)
+                _ = manager.ringBuffer.read(left: ptr, right: rPtr, count: frameCount)
+                manager.eqEngine.processStereo(left: ptr, right: rPtr, count: frameCount)
+                manager.limiter.processStereo(left: ptr, right: rPtr, count: frameCount)
 
-            // Real-time DSP Processing Chain:
-            // 1. Parametric, Dynamic, and Mid/Side EQ
-            self.eqEngine.processStereo(left: outLeft, right: outRight, count: frames)
+                // Telemetry
+                var mono = [Float](repeating: 0.0, count: frameCount)
+                for i in 0..<frameCount { mono[i] = (ptr[i] + rPtr[i]) * 0.5 }
+                mono.withUnsafeBufferPointer { mPtr in manager.analyzer.feed(samples: mPtr.baseAddress!, count: frameCount) }
+                let meter = manager.loudnessMeter.processStereo(left: ptr, right: rPtr, count: frameCount)
+                manager.onMeterUpdate?(meter)
 
-            // 2. True Peak Limiter / Clip Guard
-            self.limiter.processStereo(left: outLeft, right: outRight, count: frames)
+            } else if buf.mNumberChannels >= 2 {
+                // Interleaved (Stereo)
+                var left = [Float](repeating: 0.0, count: frameCount)
+                var right = [Float](repeating: 0.0, count: frameCount)
+                _ = manager.ringBuffer.read(left: &left, right: &right, count: frameCount)
 
-            // 3. Telemetry: FFT Spectrum Analyzer
-            var mono = [Float](repeating: 0.0, count: frames)
-            for i in 0..<frames {
-                mono[i] = (outLeft[i] + outRight[i]) * 0.5
+                left.withUnsafeMutableBufferPointer { lPtr in
+                    right.withUnsafeMutableBufferPointer { rPtr in
+                        manager.eqEngine.processStereo(left: lPtr.baseAddress!, right: rPtr.baseAddress!, count: frameCount)
+                        manager.limiter.processStereo(left: lPtr.baseAddress!, right: rPtr.baseAddress!, count: frameCount)
+
+                        for i in 0..<frameCount {
+                            ptr[i * 2] = lPtr[i]
+                            ptr[i * 2 + 1] = rPtr[i]
+                        }
+
+                        var mono = [Float](repeating: 0.0, count: frameCount)
+                        for i in 0..<frameCount { mono[i] = (lPtr[i] + rPtr[i]) * 0.5 }
+                        mono.withUnsafeBufferPointer { mPtr in manager.analyzer.feed(samples: mPtr.baseAddress!, count: frameCount) }
+                        let meter = manager.loudnessMeter.processStereo(left: lPtr.baseAddress!, right: rPtr.baseAddress!, count: frameCount)
+                        manager.onMeterUpdate?(meter)
+                    }
+                }
             }
-            mono.withUnsafeBufferPointer { mPtr in
-                self.analyzer.feed(samples: mPtr.baseAddress!, count: frames)
-            }
-
-            // 4. Telemetry: Loudness Meter (Peak & LUFS)
-            let meter = self.loudnessMeter.processStereo(left: outLeft, right: outRight, count: frames)
-            self.onMeterUpdate?(meter)
 
             return noErr
+        }, Unmanaged.passUnretained(self).toOpaque(), &outProcID)
+
+        guard outStatus == noErr, let validOutProc = outProcID else {
+            throw NSError(domain: "dynaQ.AudioEngine", code: Int(outStatus), userInfo: [NSLocalizedDescriptionKey: "Failed to create hardware output IOProc (OSStatus \(outStatus))"])
         }
+        self.outputIOProcID = validOutProc
+        AudioDeviceStart(outputID, validOutProc)
 
-        self.sourceNode = newSourceNode
-        engine.attach(newSourceNode)
-        engine.connect(newSourceNode, to: engine.mainMixerNode, format: stereoFormat)
-        engine.connect(engine.mainMixerNode, to: engine.outputNode, format: stereoFormat)
-
-        try engine.start()
-        isRunning = true
+        self.isRunning = true
 
         DispatchQueue.main.async { [weak self] in
             self?.startTelemetryTimer()
@@ -271,17 +282,19 @@ public final class AudioEngineManager: @unchecked Sendable {
         if #available(macOS 14.2, *) {
             SystemAudioTap.shared.stop()
         }
-        if engine.inputNode.numberOfInputs > 0 {
-            engine.inputNode.removeTap(onBus: 0)
+
+        if let inProc = inputHardwareIOProcID, let inID = activeInputID {
+            AudioDeviceStop(inID, inProc)
+            AudioDeviceDestroyIOProcID(inID, inProc)
+            inputHardwareIOProcID = nil
         }
 
-        if let node = sourceNode {
-            engine.disconnectNodeOutput(node)
-            engine.detach(node)
-            sourceNode = nil
+        if let outProc = outputIOProcID, let outID = activeOutputID {
+            AudioDeviceStop(outID, outProc)
+            AudioDeviceDestroyIOProcID(outID, outProc)
+            outputIOProcID = nil
         }
 
-        engine.stop()
         isRunning = false
         ringBuffer.reset()
 
@@ -299,6 +312,11 @@ public final class AudioEngineManager: @unchecked Sendable {
 
     public func setCaptureSource(_ source: AudioCaptureSource) throws {
         try start(captureSource: source, inputDeviceID: activeInputID, outputDeviceID: activeOutputID)
+    }
+
+    public func setTargetProcess(id: AudioObjectID?) throws {
+        self.selectedTargetProcessID = id
+        try start(captureSource: captureSource, inputDeviceID: activeInputID, outputDeviceID: activeOutputID)
     }
 
     public func switchInputDevice(id: AudioDeviceID) throws {

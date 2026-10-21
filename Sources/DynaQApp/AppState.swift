@@ -1,5 +1,6 @@
 import SwiftUI
 import Combine
+import CoreAudio
 import DynaQCore
 import DynaQDSP
 import DynaQAudioDriver
@@ -38,6 +39,9 @@ public final class AppState: ObservableObject {
     // Audio Hardware I/O & Routing Mode
     @Published public var captureSource: AudioCaptureSource = .systemAudio
     @Published public var devices: [AudioDevice] = []
+    @Published public var availableAudioApps: [AudioAppProcess] = []
+    @Published public var selectedAudioApp: AudioAppProcess? = nil
+
     @Published public var selectedInputDevice: AudioDevice?
     @Published public var selectedOutputDevice: AudioDevice?
     @Published public var selectedBufferSize: UInt32 = 256
@@ -66,21 +70,22 @@ public final class AppState: ObservableObject {
     public init() {
         let loadedPresets = presetStore.loadAllProfiles()
         self.presets = loadedPresets
-        let initial = loadedPresets.first ?? DefaultPresets.studioFlat
+        let initial = loadedPresets.first ?? DefaultPresets.harmanHeadphoneTarget
 
         self.profileA = initial
         self.profileB = initial.duplicate(newName: "\(initial.name) (B)")
         self.selectedBandID = initial.bands.first?.id
 
         self.appRoutes = [
-            AppAudioRoute(bundleIdentifier: "com.spotify.client", appName: "Spotify", volume: 1.0),
             AppAudioRoute(bundleIdentifier: "com.apple.Music", appName: "Apple Music", volume: 1.0),
+            AppAudioRoute(bundleIdentifier: "com.spotify.client", appName: "Spotify", volume: 1.0),
             AppAudioRoute(bundleIdentifier: "com.apple.logic10", appName: "Logic Pro", volume: 1.0),
             AppAudioRoute(bundleIdentifier: "com.google.Chrome", appName: "Google Chrome", volume: 0.85)
         ]
 
         setupAudioEngineBindings()
         refreshHardwareDevices()
+        refreshAudioApps()
         startLiveSystemAudio()
     }
 
@@ -138,13 +143,36 @@ public final class AppState: ObservableObject {
         self.selectedInputDevice = devices.first(where: { $0.id == defInID })
     }
 
+    public func refreshAudioApps() {
+        if #available(macOS 14.2, *) {
+            let apps = SystemAudioTap.shared.fetchAudioProcesses()
+            self.availableAudioApps = apps
+            if selectedAudioApp == nil {
+                // Auto-pick Apple Music or Spotify or active player
+                let musicApp = apps.first(where: { $0.bundleID.lowercased().contains("music") })
+                let spotifyApp = apps.first(where: { $0.bundleID.lowercased().contains("spotify") })
+                self.selectedAudioApp = musicApp ?? spotifyApp ?? apps.first
+            }
+        }
+    }
+
+    public func selectAudioApp(_ app: AudioAppProcess) {
+        self.selectedAudioApp = app
+        engineManager.selectedTargetProcessID = app.id
+        try? engineManager.start(captureSource: captureSource, inputDeviceID: selectedInputDevice?.id, outputDeviceID: selectedOutputDevice?.id)
+        statusMessage = "Routing: \(app.name)"
+    }
+
     public func startLiveSystemAudio() {
         do {
+            refreshAudioApps()
+            engineManager.selectedTargetProcessID = selectedAudioApp?.id
             let inID = selectedInputDevice?.id ?? coreAudioManager.getDefaultInputDeviceID()
             let outID = selectedOutputDevice?.id ?? coreAudioManager.getDefaultOutputDeviceID()
             try engineManager.start(captureSource: captureSource, inputDeviceID: inID, outputDeviceID: outID)
             isEngineOnline = true
-            statusMessage = captureSource == .systemAudio ? "Live System Audio Tap Active" : "Hardware Input Stream Active"
+            let appName = selectedAudioApp?.name ?? "System Audio"
+            statusMessage = captureSource == .systemAudio ? "Equalizing: \(appName)" : "Hardware Mic Active"
         } catch {
             isEngineOnline = false
             statusMessage = "Audio I/O Error: \(error.localizedDescription)"

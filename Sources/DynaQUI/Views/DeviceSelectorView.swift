@@ -1,10 +1,13 @@
 import SwiftUI
+import CoreAudio
 import DynaQCore
 import DynaQAudioDriver
 
-/// Pro Audio Hardware I/O selector bar showing Capture Source, Input, Output, Buffer Size, and Live Latency.
+/// Pro Audio Hardware I/O selector bar showing Target App, Capture Source, Input, Output, Buffer Size, and Live Latency.
 public struct DeviceSelectorView: View {
     public let captureSource: AudioCaptureSource
+    public let availableApps: [AudioAppProcess]
+    public let selectedApp: AudioAppProcess?
     public let devices: [AudioDevice]
     public let currentInput: AudioDevice?
     public let currentOutput: AudioDevice?
@@ -12,6 +15,7 @@ public struct DeviceSelectorView: View {
     public let latencyMs: Double
     public let feedbackGuard: Bool
     public let onSelectCaptureSource: (AudioCaptureSource) -> Void
+    public let onSelectApp: (AudioAppProcess) -> Void
     public let onSelectInput: (AudioDevice) -> Void
     public let onSelectOutput: (AudioDevice) -> Void
     public let onSelectBufferSize: (UInt32) -> Void
@@ -19,6 +23,8 @@ public struct DeviceSelectorView: View {
 
     public init(
         captureSource: AudioCaptureSource = .systemAudio,
+        availableApps: [AudioAppProcess] = [],
+        selectedApp: AudioAppProcess? = nil,
         devices: [AudioDevice],
         currentInput: AudioDevice?,
         currentOutput: AudioDevice?,
@@ -26,12 +32,15 @@ public struct DeviceSelectorView: View {
         latencyMs: Double,
         feedbackGuard: Bool,
         onSelectCaptureSource: @escaping (AudioCaptureSource) -> Void = { _ in },
+        onSelectApp: @escaping (AudioAppProcess) -> Void = { _ in },
         onSelectInput: @escaping (AudioDevice) -> Void,
         onSelectOutput: @escaping (AudioDevice) -> Void,
         onSelectBufferSize: @escaping (UInt32) -> Void,
         onToggleFeedbackGuard: @escaping () -> Void
     ) {
         self.captureSource = captureSource
+        self.availableApps = availableApps
+        self.selectedApp = selectedApp
         self.devices = devices
         self.currentInput = currentInput
         self.currentOutput = currentOutput
@@ -39,6 +48,7 @@ public struct DeviceSelectorView: View {
         self.latencyMs = latencyMs
         self.feedbackGuard = feedbackGuard
         self.onSelectCaptureSource = onSelectCaptureSource
+        self.onSelectApp = onSelectApp
         self.onSelectInput = onSelectInput
         self.onSelectOutput = onSelectOutput
         self.onSelectBufferSize = onSelectBufferSize
@@ -47,45 +57,48 @@ public struct DeviceSelectorView: View {
 
     public var body: some View {
         HStack(spacing: 8) {
-            // Source Selector: System Audio (All Apps) vs Hardware Mic
-            Menu {
-                Section(header: Text("ROUTING SOURCE")) {
-                    ForEach(AudioCaptureSource.allCases, id: \.self) { src in
-                        Button(action: { onSelectCaptureSource(src) }) {
-                            HStack {
-                                Text(src.rawValue)
-                                if src == captureSource {
-                                    Image(systemName: "checkmark")
+            // Target Application Selector (When in System Audio Mode)
+            if captureSource == .systemAudio {
+                Menu {
+                    Section(header: Text("TARGET APPLICATION TO EQUALIZE")) {
+                        ForEach(availableApps) { app in
+                            Button(action: { onSelectApp(app) }) {
+                                HStack {
+                                    Text(app.name)
+                                    if app.id == selectedApp?.id {
+                                        Image(systemName: "checkmark")
+                                    }
                                 }
                             }
                         }
                     }
-                }
-            } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: captureSource == .systemAudio ? "waveform.and.person.filled" : "mic.fill")
-                        .foregroundColor(captureSource == .systemAudio ? DynaQTheme.green : DynaQTheme.blue)
-                        .font(.system(size: 10))
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "music.note")
+                            .foregroundColor(DynaQTheme.cyan)
+                            .font(.system(size: 10))
 
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("SOURCE")
-                            .font(.system(size: 7, weight: .black, design: .monospaced))
-                            .foregroundColor(DynaQTheme.textMuted)
-                        Text(captureSource == .systemAudio ? "System (All Apps)" : "Hardware Mic")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(DynaQTheme.textPrimary)
-                            .lineLimit(1)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("TARGET APP")
+                                .font(.system(size: 7, weight: .black, design: .monospaced))
+                                .foregroundColor(DynaQTheme.textMuted)
+                            Text(selectedApp?.name ?? "Apple Music")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundColor(DynaQTheme.textPrimary)
+                                .lineLimit(1)
+                                .frame(maxWidth: 110, alignment: .leading)
+                        }
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 8))
+                            .foregroundColor(DynaQTheme.textSecondary)
                     }
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.system(size: 8))
-                        .foregroundColor(DynaQTheme.textSecondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(DynaQTheme.surfaceElevated)
+                    .cornerRadius(5)
                 }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(DynaQTheme.surfaceElevated)
-                .cornerRadius(5)
+                .menuStyle(.borderlessButton)
             }
-            .menuStyle(.borderlessButton)
 
             // If hardware input mode, show input device selector
             if captureSource == .hardwareInput {
@@ -226,25 +239,6 @@ public struct DeviceSelectorView: View {
             .padding(.vertical, 4)
             .background(DynaQTheme.surfaceElevated.opacity(0.8))
             .cornerRadius(5)
-
-            // Feedback Guard Safety Indicator
-            if captureSource == .hardwareInput {
-                Button(action: onToggleFeedbackGuard) {
-                    HStack(spacing: 4) {
-                        Image(systemName: feedbackGuard ? "shield.fill" : "shield.slash")
-                            .font(.system(size: 9))
-                            .foregroundColor(feedbackGuard ? DynaQTheme.green : DynaQTheme.red)
-                        Text("GUARD")
-                            .font(.system(size: 8, weight: .bold, design: .monospaced))
-                            .foregroundColor(feedbackGuard ? DynaQTheme.textSecondary : DynaQTheme.red)
-                    }
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 6)
-                    .background(feedbackGuard ? DynaQTheme.surfaceElevated.opacity(0.5) : DynaQTheme.red.opacity(0.2))
-                    .cornerRadius(5)
-                }
-                .buttonStyle(.plain)
-            }
         }
     }
 }

@@ -54,9 +54,11 @@ public struct MainWindowView: View {
 
                 Spacer()
 
-                // Complete Hardware I/O Selector (Capture Source, Input, Output, Buffer, Latency)
+                // Complete Hardware I/O & Target App Selector
                 DeviceSelectorView(
                     captureSource: state.captureSource,
+                    availableApps: state.availableAudioApps,
+                    selectedApp: state.selectedAudioApp,
                     devices: state.devices,
                     currentInput: state.selectedInputDevice,
                     currentOutput: state.selectedOutputDevice,
@@ -64,6 +66,7 @@ public struct MainWindowView: View {
                     latencyMs: state.roundtripLatencyMs,
                     feedbackGuard: state.feedbackProtection,
                     onSelectCaptureSource: { state.setCaptureSource($0) },
+                    onSelectApp: { state.selectAudioApp($0) },
                     onSelectInput: { state.setInputDevice($0) },
                     onSelectOutput: { state.setOutputDevice($0) },
                     onSelectBufferSize: { state.setBufferSize($0) },

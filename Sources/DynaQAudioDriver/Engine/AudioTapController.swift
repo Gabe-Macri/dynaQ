@@ -2,6 +2,21 @@ import Foundation
 import CoreAudio
 import DynaQCore
 
+/// Discovered macOS audio application available for equalization.
+public struct AudioAppProcess: Identifiable, Hashable, Sendable {
+    public var id: AudioObjectID
+    public var pid: pid_t
+    public var bundleID: String
+    public var name: String
+
+    public init(id: AudioObjectID, pid: pid_t, bundleID: String, name: String) {
+        self.id = id
+        self.pid = pid
+        self.bundleID = bundleID
+        self.name = name
+    }
+}
+
 /// Manages system-wide audio tapping via modern macOS CoreAudio Process Tap (macOS 14.2+).
 @available(macOS 14.2, *)
 public final class SystemAudioTap: @unchecked Sendable {
@@ -27,21 +42,91 @@ public final class SystemAudioTap: @unchecked Sendable {
         return isRunning
     }
 
-    /// Creates and starts the global macOS system audio tap.
-    public func start(muteSystemOutput: Bool = false) throws {
+    /// Enumerate all running applications registered with CoreAudio.
+    public func fetchAudioProcesses() -> [AudioAppProcess] {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyProcessObjectList,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var size: UInt32 = 0
+        let status = AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size)
+        guard status == noErr, size > 0 else { return [] }
+
+        let count = Int(size) / MemoryLayout<AudioObjectID>.size
+        var processIDs = [AudioObjectID](repeating: 0, count: count)
+        AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &processIDs)
+
+        let myPID = ProcessInfo.processInfo.processIdentifier
+        var results: [AudioAppProcess] = []
+
+        for objID in processIDs {
+            var pidAddress = AudioObjectPropertyAddress(
+                mSelector: kAudioProcessPropertyPID,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            var procPID: pid_t = 0
+            var pidSize = UInt32(MemoryLayout<pid_t>.size)
+            let s1 = AudioObjectGetPropertyData(objID, &pidAddress, 0, nil, &pidSize, &procPID)
+            guard s1 == noErr, procPID > 0, procPID != myPID else { continue }
+
+            var bundleAddress = AudioObjectPropertyAddress(
+                mSelector: kAudioProcessPropertyBundleID,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            var bundleCF: Unmanaged<CFString>?
+            var bSize = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+            AudioObjectGetPropertyData(objID, &bundleAddress, 0, nil, &bSize, &bundleCF)
+            let bundle = bundleCF?.takeRetainedValue() as String? ?? ""
+
+            // Clean display name
+            var name = bundle
+            if let last = bundle.split(separator: ".").last {
+                name = String(last)
+            }
+            if name.isEmpty { name = "Process \(procPID)" }
+
+            results.append(AudioAppProcess(id: objID, pid: procPID, bundleID: bundle, name: name))
+        }
+
+        return results
+    }
+
+    /// Creates and starts tapping target processes. If targetIDs is empty, auto-detects active media apps.
+    public func start(targetIDs: [AudioObjectID] = [], muteTargetOutput: Bool = true) throws {
         lock.lock()
         defer { lock.unlock() }
 
         guard !isRunning else { return }
 
-        // 1. Identify our process AudioObjectID to exclude dynaQ from its own tap (feedback prevention)
-        let myProcessObjectID = getMyProcessObjectID()
-        let excluded: [AudioObjectID] = myProcessObjectID != nil ? [myProcessObjectID!] : []
+        // 1. Determine processes to tap
+        var processList = targetIDs
+        if processList.isEmpty {
+            let apps = fetchAudioProcesses()
+            // Prioritize known playback apps
+            let mediaApps = apps.filter {
+                let b = $0.bundleID.lowercased()
+                return b.contains("music") || b.contains("spotify") || b.contains("safari") ||
+                       b.contains("chrome") || b.contains("quicktime") || b.contains("logic") ||
+                       b.contains("ableton") || b.contains("reaper") || b.contains("youtube")
+            }
+            if let firstMedia = mediaApps.first {
+                processList = [firstMedia.id]
+            } else if let firstApp = apps.first {
+                processList = [firstApp.id]
+            }
+        }
 
-        // 2. Build CATapDescription
-        let tapDesc = CATapDescription(stereoGlobalTapButExcludeProcesses: excluded)
-        tapDesc.name = "dynaQ System Audio Tap"
-        tapDesc.muteBehavior = muteSystemOutput ? CATapMuteBehavior.mutedWhenTapped : CATapMuteBehavior.unmuted
+        guard !processList.isEmpty else {
+            throw NSError(domain: "dynaQ.SystemAudioTap", code: 1, userInfo: [NSLocalizedDescriptionKey: "No active audio playback applications found to tap."])
+        }
+
+        // 2. Build CATapDescription with .mutedWhenTapped so raw audio is redirected ONLY through dynaQ
+        let tapDesc = CATapDescription(stereoMixdownOfProcesses: processList)
+        tapDesc.name = "dynaQ Audio Stream Tap"
+        tapDesc.muteBehavior = muteTargetOutput ? CATapMuteBehavior.mutedWhenTapped : CATapMuteBehavior.unmuted
 
         var newTapID = AudioObjectID(0)
         let tapStatus = AudioHardwareCreateProcessTap(tapDesc, &newTapID)
@@ -180,36 +265,5 @@ public final class SystemAudioTap: @unchecked Sendable {
         }
 
         isRunning = false
-    }
-
-    private func getMyProcessObjectID() -> AudioObjectID? {
-        let currentPID = ProcessInfo.processInfo.processIdentifier
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyProcessObjectList,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        var size: UInt32 = 0
-        let status = AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size)
-        guard status == noErr, size > 0 else { return nil }
-
-        let count = Int(size) / MemoryLayout<AudioObjectID>.size
-        var processIDs = [AudioObjectID](repeating: 0, count: count)
-        AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &processIDs)
-
-        for objID in processIDs {
-            var pidAddress = AudioObjectPropertyAddress(
-                mSelector: kAudioProcessPropertyPID,
-                mScope: kAudioObjectPropertyScopeGlobal,
-                mElement: kAudioObjectPropertyElementMain
-            )
-            var procPID: pid_t = 0
-            var pidSize = UInt32(MemoryLayout<pid_t>.size)
-            let s = AudioObjectGetPropertyData(objID, &pidAddress, 0, nil, &pidSize, &procPID)
-            if s == noErr && procPID == currentPID {
-                return objID
-            }
-        }
-        return nil
     }
 }
