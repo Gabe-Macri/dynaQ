@@ -6,7 +6,7 @@
 
 ---
 
-##  Pro Features & Audio Engineering Toolset
+## Pro Features & Audio Engineering Toolset
 
 - **Decoupled Ultra-Lightweight Backend Architecture (`dynaQ-router`)**:
   - **Ultra-Lightweight Dedicated Backend**: CoreAudio routing logic runs completely decoupled from DSP equations, consuming ~0.0% CPU in passthrough.
@@ -49,7 +49,7 @@
 
 ---
 
-##  Architecture
+## Architecture
 
 ```mermaid
 flowchart TD
@@ -127,30 +127,22 @@ swift run dynaQ
 
 ---
 
-##  Production Release & Installation
+## Documentation
 
-### Option A: Install from Disk Image (`.dmg`)
-Double-click `dist/dynaQ-1.0.0-beta.1.dmg` and drag `dynaQ.app` into `/Applications`.
-
-### Option B: Build Production Release Package from Source
-Run the release packaging pipeline:
-```bash
-./scripts/build_release.sh
-```
-This automatically:
-1. Compiles optimized production release binaries (`swift build -c release`).
-2. Generates multi-resolution Retina `AppIcon.icns`.
-3. Assembles the standalone macOS application bundle: `dist/dynaQ.app`.
-4. Codesigns the bundle with ad-hoc signing (`codesign --deep`).
-5. Packages a drag-and-drop installer disk image: `dist/dynaQ-1.0.0-beta.1.dmg`.
-
+Comprehensive technical documentation is available in the [`docs/`](docs/) directory:
+- [System Overview & Architecture](docs/#/architecture)
+- [C DSP Kernel & Lock-Free SPSC Buffer](docs/#/c-dsp-kernel)
+- [Parametric & Dynamic EQ Mathematics](docs/#/dsp-engine)
+- [CoreAudio Hardware Routing & Latency](docs/#/routing-and-io)
+- [Standalone Router Daemon & CLI](docs/#/cli-and-router)
+- [Installation & Build Pipelines](docs/#/installation)
 
 ---
 
-##  Production Release & Installation (Beta 1)
+## Production Release & Installation (v1.0.0-beta.1)
 
 ### Option A: Install from Disk Image (`.dmg`)
-Double-click `dist/dynaQ-1.0.0-beta.1.dmg` and drag `dynaQ.app` into `/Applications`.
+Double-click `output/dynaQ-1.0.0-beta.1.dmg` and drag `dynaQ.app` into `/Applications`.
 
 ### Option B: Build Production Release Package from Source
 Run the release packaging pipeline:

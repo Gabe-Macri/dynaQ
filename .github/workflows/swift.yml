@@ -7,12 +7,14 @@ on:
       - '**.md'
       - 'LICENSE'
       - '.gitignore'
+      - 'docs/**'
   pull_request:
     branches: [ main, master ]
     paths-ignore:
       - '**.md'
       - 'LICENSE'
       - '.gitignore'
+      - 'docs/**'
 
 # Automatically cancel older runs if a new commit is pushed to the same branch
 concurrency:

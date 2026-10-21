@@ -1,0 +1,222 @@
+    :root {
+      --base-font-family: -apple-system, BlinkMacSystemFont, "SF Mono", "JetBrains Mono", Menlo, Monaco, Consolas, monospace;
+      --code-font-family: "SF Mono", "JetBrains Mono", Menlo, Monaco, Consolas, monospace;
+      --theme-color: #38f273;
+      --text-color-base: #c9d1d9;
+      --border-color: #262c33;
+      --bg-primary: #0a0c0e;
+      --bg-secondary: #101316;
+      --bg-code: #13171b;
+      --selection-color: #234d31;
+    }
+
+    body {
+      background-color: var(--bg-primary);
+      color: var(--text-color-base);
+      font-family: var(--base-font-family);
+      font-size: 14px;
+      line-height: 1.6;
+      letter-spacing: -0.01em;
+    }
+
+    ::selection {
+      background: var(--selection-color);
+      color: #ffffff;
+    }
+
+    .sidebar {
+      background-color: var(--bg-secondary);
+      border-right: 1px solid var(--border-color);
+      font-family: var(--base-font-family);
+      font-size: 13px;
+    }
+
+    .sidebar .app-name-link {
+      font-family: var(--code-font-family);
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      color: #38f273;
+      text-transform: uppercase;
+      font-size: 16px;
+    }
+
+    .sidebar ul li a {
+      color: #8b949e;
+      transition: color 0.15s ease;
+      font-size: 13px;
+    }
+
+    .sidebar ul li a:hover,
+    .sidebar ul li.active > a {
+      color: #38f273;
+      font-weight: 600;
+      text-decoration: none;
+    }
+
+    .content {
+      padding-top: 20px;
+    }
+
+    .markdown-section {
+      max-width: 880px;
+      padding: 30px 40px 60px 40px;
+    }
+
+    .markdown-section h1,
+    .markdown-section h2,
+    .markdown-section h3,
+    .markdown-section h4 {
+      color: #f0f6fc;
+      font-weight: 600;
+      border-bottom: 1px solid var(--border-color);
+      padding-bottom: 8px;
+      letter-spacing: -0.02em;
+    }
+
+    .markdown-section h1 {
+      font-size: 26px;
+      margin-top: 0;
+    }
+
+    .markdown-section h2 {
+      font-size: 19px;
+      margin-top: 36px;
+    }
+
+    .markdown-section h3 {
+      font-size: 15px;
+      margin-top: 24px;
+      border-bottom: none;
+      color: #38f273;
+    }
+
+    .markdown-section a {
+      color: #38f273;
+      text-decoration: none;
+      border-bottom: 1px dotted #38f273;
+    }
+
+    .markdown-section a:hover {
+      text-decoration: none;
+      border-bottom: 1px solid #38f273;
+    }
+
+    .markdown-section code {
+      background-color: var(--bg-code);
+      color: #38f273;
+      padding: 2px 5px;
+      font-size: 12.5px;
+      border-radius: 0;
+      border: 1px solid var(--border-color);
+      font-family: var(--code-font-family);
+    }
+
+    .markdown-section pre {
+      background-color: var(--bg-code) !important;
+      border: 1px solid var(--border-color);
+      border-radius: 0;
+      padding: 14px 18px;
+    }
+
+    .markdown-section pre > code {
+      background-color: transparent !important;
+      border: none;
+      color: #d1d7de;
+      padding: 0;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .markdown-section table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 20px 0;
+      border: 1px solid var(--border-color);
+      font-size: 13px;
+    }
+
+    .markdown-section th {
+      background-color: var(--bg-secondary);
+      color: #f0f6fc;
+      border: 1px solid var(--border-color);
+      padding: 8px 12px;
+      text-align: left;
+      font-weight: 600;
+    }
+
+    .markdown-section td {
+      border: 1px solid var(--border-color);
+      padding: 8px 12px;
+      color: var(--text-color-base);
+    }
+
+    .markdown-section tr:nth-child(2n) {
+      background-color: rgba(255, 255, 255, 0.02);
+    }
+
+    .markdown-section blockquote {
+      border-left: 3px solid #38f273;
+      background-color: rgba(56, 242, 115, 0.04);
+      color: #c9d1d9;
+      margin: 1.5em 0;
+      padding: 12px 18px;
+      border-radius: 0;
+    }
+
+    .markdown-section blockquote p {
+      margin: 0;
+    }
+
+    .markdown-section hr {
+      border: none;
+      border-top: 1px solid var(--border-color);
+      margin: 30px 0;
+    }
+
+    /* Search Input Styling */
+    .search {
+      border-bottom: 1px solid var(--border-color);
+      padding: 12px 14px;
+    }
+
+    .search input {
+      background-color: var(--bg-primary);
+      border: 1px solid var(--border-color);
+      color: #f0f6fc;
+      font-family: var(--code-font-family);
+      font-size: 12px;
+      border-radius: 0;
+      padding: 6px 10px;
+    }
+
+    .search input:focus {
+      border-color: #38f273;
+      outline: none;
+    }
+
+    .search .clear-button {
+      cursor: pointer;
+    }
+
+    /* Copy Code Button */
+    .docsify-copy-code-button {
+      background: #1f242c !important;
+      color: #8b949e !important;
+      border: 1px solid var(--border-color) !important;
+      border-radius: 0 !important;
+      font-family: var(--code-font-family) !important;
+      font-size: 11px !important;
+      padding: 4px 8px !important;
+    }
+
+    .docsify-copy-code-button:hover {
+      color: #38f273 !important;
+      border-color: #38f273 !important;
+    }
+
+    /* Sidebar toggle button */
+    .sidebar-toggle {
+      background-color: transparent;
+      bottom: 10px;
+      left: 10px;
+    }
