@@ -69,3 +69,4 @@ public final class BiquadFilter: @unchecked Sendable {
         }
     }
 }
+

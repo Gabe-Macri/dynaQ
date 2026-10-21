@@ -67,3 +67,4 @@ public struct AudioDevice: Identifiable, Codable, Equatable, Sendable {
         self.transportType = transportType
     }
 }
+

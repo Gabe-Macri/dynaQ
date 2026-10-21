@@ -130,3 +130,4 @@ public struct MainWindowView: View {
         .background(DynaQTheme.bg)
     }
 }
+

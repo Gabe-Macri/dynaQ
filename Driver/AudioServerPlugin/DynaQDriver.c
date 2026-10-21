@@ -54,3 +54,4 @@ AudioServerPlugInDriverRef DynaQDriver_Create(CFAllocatorRef inAllocator, CFUUID
     // Returns driver interface conforming to AudioServerPlugInDriverInterface
     return NULL; // Template skeleton for HAL deployment
 }
+

@@ -31,3 +31,4 @@ public struct AppAudioRoute: Identifiable, Codable, Equatable, Sendable {
         self.assignedProfileId = assignedProfileId
     }
 }
+

@@ -82,3 +82,4 @@ final class BiquadFilterTests: XCTestCase {
         XCTAssertGreaterThan(responses[index3k], 1.0, "Harman curve should have positive gain around 3.2 kHz.")
     }
 }
+

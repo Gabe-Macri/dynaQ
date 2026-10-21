@@ -19,3 +19,4 @@ echo "Restarting CoreAudio daemon (coreaudiod)..."
 sudo killall coreaudiod 2>/dev/null || true
 
 echo "dynaQ Driver registered successfully."
+

@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:dynaQ}",
+            "name": "Debug dynaQ",
+            "target": "dynaQ",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug dynaQ"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:dynaQ}",
+            "name": "Release dynaQ",
+            "target": "dynaQ",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release dynaQ"
+        }
+    ]
+}

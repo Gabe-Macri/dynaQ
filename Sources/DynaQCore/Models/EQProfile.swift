@@ -57,3 +57,4 @@ public struct EQProfile: Identifiable, Codable, Equatable, Sendable {
         return copy
     }
 }
+

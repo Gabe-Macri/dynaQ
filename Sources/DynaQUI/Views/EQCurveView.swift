@@ -281,3 +281,4 @@ private struct SpectrumShape: Shape {
         return path
     }
 }
+

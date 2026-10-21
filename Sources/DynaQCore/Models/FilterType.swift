@@ -46,3 +46,4 @@ public enum FilterType: String, Codable, CaseIterable, Sendable, Identifiable {
         }
     }
 }
+

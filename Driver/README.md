@@ -22,3 +22,4 @@ Run:
 ./scripts/install_driver.sh
 ```
 This builds the driver bundle, installs it into `/Library/Audio/Plug-Ins/HAL/`, and refreshes `coreaudiod`.
+

@@ -94,3 +94,4 @@ public struct MenuBarView: View {
         .background(DynaQTheme.bg)
     }
 }
+

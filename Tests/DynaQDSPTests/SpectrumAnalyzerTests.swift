@@ -25,3 +25,4 @@ final class SpectrumAnalyzerTests: XCTestCase {
         XCTAssertGreaterThan(maxEnergy, -40.0, "FFT of 1kHz sine wave should show clear peak energy.")
     }
 }
+

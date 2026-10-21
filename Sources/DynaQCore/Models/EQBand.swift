@@ -73,3 +73,4 @@ public struct EQBand: Identifiable, Codable, Equatable, Sendable {
         return String(format: "Q %.2f", q)
     }
 }
+

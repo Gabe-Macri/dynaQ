@@ -102,3 +102,4 @@ public struct RotaryKnob: View {
         return String(format: "%@%.1f %@", sign, value, unit)
     }
 }
+

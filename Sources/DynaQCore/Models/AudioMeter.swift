@@ -33,3 +33,4 @@ public struct AudioMeter: Codable, Sendable {
 
     public static let silent = AudioMeter()
 }
+

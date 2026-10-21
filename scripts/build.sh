@@ -12,3 +12,4 @@ swift test
 
 echo "--> Build succeeded!"
 echo "Binary available at: .build/release/dynaQ"
+

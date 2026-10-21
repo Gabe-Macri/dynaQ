@@ -196,3 +196,4 @@ public final class ParametricEQEngine: @unchecked Sendable {
         return totalDB
     }
 }
+

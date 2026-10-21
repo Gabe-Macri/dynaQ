@@ -39,3 +39,4 @@ final class PresetTests: XCTestCase {
         XCTAssertEqual(copy.bands.count, original.bands.count)
     }
 }
+

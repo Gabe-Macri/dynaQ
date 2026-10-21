@@ -131,3 +131,4 @@ public final class SpectrumAnalyzer: @unchecked Sendable {
         return smoothedBinnedDB
     }
 }
+

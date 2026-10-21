@@ -146,3 +146,4 @@ public struct BiquadCoefficients: Sendable, Equatable {
         return 20.0 * log10(magRatio)
     }
 }
+

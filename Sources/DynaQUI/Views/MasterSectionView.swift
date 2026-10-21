@@ -105,3 +105,4 @@ public struct MasterSectionView: View {
         )
     }
 }
+

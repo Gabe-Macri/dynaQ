@@ -76,3 +76,4 @@ public final class DynamicEQProcessor: @unchecked Sendable {
         return currentGainOffset
     }
 }
+

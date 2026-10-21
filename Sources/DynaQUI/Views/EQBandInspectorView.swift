@@ -252,3 +252,4 @@ public struct EQBandInspectorView: View {
         selectedBandID = profile.bands.first?.id
     }
 }
+
