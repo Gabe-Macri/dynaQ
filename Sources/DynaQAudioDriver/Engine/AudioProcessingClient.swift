@@ -17,3 +17,4 @@ public protocol AudioProcessingClient: AnyObject, Sendable {
         sampleRate: Float
     )
 }
+
