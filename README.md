@@ -122,3 +122,23 @@ swift run dynaQ
 - Select your target input and output hardware from the top navigation bar.
 - Adjust buffer sizes on the fly to tune latency vs CPU overhead.
 - Docks into the macOS Menu Bar for quick access.
+
+---
+
+##  Production Release & Installation
+
+### Option A: Install from Disk Image (`.dmg`)
+Double-click `dist/dynaQ-1.0.0-beta.1.dmg` and drag `dynaQ.app` into `/Applications`.
+
+### Option B: Build Production Release Package from Source
+Run the release packaging pipeline:
+```bash
+./scripts/build_release.sh
+```
+This automatically:
+1. Compiles optimized production release binaries (`swift build -c release`).
+2. Generates multi-resolution Retina `AppIcon.icns`.
+3. Assembles the standalone macOS application bundle: `dist/dynaQ.app`.
+4. Codesigns the bundle with ad-hoc signing (`codesign --deep`).
+5. Packages a drag-and-drop installer disk image: `dist/dynaQ-1.0.0-beta.1.dmg`.
+

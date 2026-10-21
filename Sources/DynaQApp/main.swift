@@ -62,8 +62,71 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var popover: NSPopover?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        setupMainMenu()
         setupStatusItem()
         openStudioWindow()
+    }
+
+    private func setupMainMenu() {
+        let mainMenu = NSMenu()
+
+        // 1. Application Menu (dynaQ)
+        let appMenuItem = NSMenuItem()
+        let appMenu = NSMenu(title: "dynaQ")
+        appMenu.addItem(withTitle: "About dynaQ", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        appMenu.addItem(NSMenuItem.separator())
+        appMenu.addItem(withTitle: "Hide dynaQ", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        let hideOthers = NSMenuItem(title: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
+        hideOthers.keyEquivalentModifierMask = [.command, .option]
+        appMenu.addItem(hideOthers)
+        appMenu.addItem(withTitle: "Show All", action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: "")
+        appMenu.addItem(NSMenuItem.separator())
+        appMenu.addItem(withTitle: "Quit dynaQ", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenuItem.submenu = appMenu
+        mainMenu.addItem(appMenuItem)
+
+        // 2. File Menu
+        let fileMenuItem = NSMenuItem()
+        let fileMenu = NSMenu(title: "File")
+        fileMenu.addItem(withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        fileMenuItem.submenu = fileMenu
+        mainMenu.addItem(fileMenuItem)
+
+        // 3. Edit Menu
+        let editMenuItem = NSMenuItem()
+        let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        let redoItem = NSMenuItem(title: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
+        redoItem.keyEquivalentModifierMask = [.command, .shift]
+        editMenu.addItem(redoItem)
+        editMenu.addItem(NSMenuItem.separator())
+        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editMenuItem.submenu = editMenu
+        mainMenu.addItem(editMenuItem)
+
+        // 4. View Menu
+        let viewMenuItem = NSMenuItem()
+        let viewMenu = NSMenu(title: "View")
+        let studioWindowItem = NSMenuItem(title: "Show Studio Window", action: #selector(showStudioWindowAction), keyEquivalent: "1")
+        studioWindowItem.target = self
+        viewMenu.addItem(studioWindowItem)
+        viewMenuItem.submenu = viewMenu
+        mainMenu.addItem(viewMenuItem)
+
+        // 5. Window Menu
+        let windowMenuItem = NSMenuItem()
+        let windowMenu = NSMenu(title: "Window")
+        windowMenu.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        windowMenu.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
+        windowMenu.addItem(NSMenuItem.separator())
+        windowMenu.addItem(withTitle: "Bring All to Front", action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
+        windowMenuItem.submenu = windowMenu
+        mainMenu.addItem(windowMenuItem)
+
+        NSApp.mainMenu = mainMenu
     }
 
     private func setupStatusItem() {
@@ -116,6 +179,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         w.makeKeyAndOrderFront(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
         self.window = w
+    }
+
+    @objc private func showStudioWindowAction() {
+        openStudioWindow()
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            openStudioWindow()
+        }
+        return true
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
