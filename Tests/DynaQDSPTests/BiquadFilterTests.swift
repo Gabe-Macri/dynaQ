@@ -69,6 +69,39 @@ final class BiquadFilterTests: XCTestCase {
         }
     }
 
+    func testPhaseInversion() {
+        var profileNormal = DefaultPresets.studioFlat
+        profileNormal.phaseInvert = false
+        let engineNormal = ParametricEQEngine(profile: profileNormal, sampleRate: 48000.0)
+
+        var profileInverted = DefaultPresets.studioFlat
+        profileInverted.phaseInvert = true
+        let engineInverted = ParametricEQEngine(profile: profileInverted, sampleRate: 48000.0)
+
+        var leftA: [Float] = [0.5, 0.25, -0.75, 0.33]
+        var rightA: [Float] = [0.1, -0.4, 0.8, -0.2]
+        var leftB = leftA
+        var rightB = rightA
+        let count = leftA.count
+
+        leftA.withUnsafeMutableBufferPointer { lPtr in
+            rightA.withUnsafeMutableBufferPointer { rPtr in
+                engineNormal.processStereo(left: lPtr.baseAddress!, right: rPtr.baseAddress!, count: count)
+            }
+        }
+
+        leftB.withUnsafeMutableBufferPointer { lPtr in
+            rightB.withUnsafeMutableBufferPointer { rPtr in
+                engineInverted.processStereo(left: lPtr.baseAddress!, right: rPtr.baseAddress!, count: count)
+            }
+        }
+
+        for i in 0..<count {
+            XCTAssertEqual(leftB[i], -leftA[i], accuracy: 0.0001, "Phase inversion must flip polarity 180°.")
+            XCTAssertEqual(rightB[i], -rightA[i], accuracy: 0.0001, "Phase inversion must flip polarity 180°.")
+        }
+    }
+
     func testParametricEQEngineCompositeEvaluation() {
         let profile = DefaultPresets.harmanHeadphoneTarget
         let engine = ParametricEQEngine(profile: profile, sampleRate: 48000.0)
@@ -82,4 +115,3 @@ final class BiquadFilterTests: XCTestCase {
         XCTAssertGreaterThan(responses[index3k], 1.0, "Harman curve should have positive gain around 3.2 kHz.")
     }
 }
-

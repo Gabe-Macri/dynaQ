@@ -1,5 +1,16 @@
 import Foundation
 
+/// Master monitor audition mode.
+public enum MonitorMode: String, Codable, CaseIterable, Sendable, Identifiable {
+    case stereo = "Stereo"
+    case mono = "Mono"
+    case sides = "Sides"
+    case leftOnly = "Left"
+    case rightOnly = "Right"
+
+    public var id: String { rawValue }
+}
+
 /// Represents a full equalizer preset or profile configuration.
 public struct EQProfile: Identifiable, Codable, Equatable, Sendable {
     public var id: UUID
@@ -12,6 +23,8 @@ public struct EQProfile: Identifiable, Codable, Equatable, Sendable {
     public var isBypassed: Bool
     public var isLimiterEnabled: Bool
     public var limiterCeiling: Float    // Ceiling in dBFS (e.g. -0.2 dBFS)
+    public var phaseInvert: Bool        // 180° polarity flip
+    public var monitorMode: MonitorMode
     public var isFactory: Bool
     public var createdAt: Date
     public var updatedAt: Date
@@ -27,6 +40,8 @@ public struct EQProfile: Identifiable, Codable, Equatable, Sendable {
         isBypassed: Bool = false,
         isLimiterEnabled: Bool = true,
         limiterCeiling: Float = -0.2,
+        phaseInvert: Bool = false,
+        monitorMode: MonitorMode = .stereo,
         isFactory: Bool = false,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
@@ -41,6 +56,8 @@ public struct EQProfile: Identifiable, Codable, Equatable, Sendable {
         self.isBypassed = isBypassed
         self.isLimiterEnabled = isLimiterEnabled
         self.limiterCeiling = limiterCeiling
+        self.phaseInvert = phaseInvert
+        self.monitorMode = monitorMode
         self.isFactory = isFactory
         self.createdAt = createdAt
         self.updatedAt = updatedAt
@@ -57,4 +74,3 @@ public struct EQProfile: Identifiable, Codable, Equatable, Sendable {
         return copy
     }
 }
-

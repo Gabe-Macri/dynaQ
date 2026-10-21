@@ -9,6 +9,7 @@ public final class CoreAudioManager: @unchecked Sendable {
     private let lock = NSLock()
     public var onDevicesChanged: (([AudioDevice]) -> Void)?
     public var onDefaultOutputChanged: ((AudioDevice?) -> Void)?
+    public var onDefaultInputChanged: ((AudioDevice?) -> Void)?
 
     public init() {
         registerPropertyListeners()
@@ -99,6 +100,103 @@ public final class CoreAudioManager: @unchecked Sendable {
         return defaultInputDeviceID
     }
 
+    /// Sets the macOS default system output device.
+    @discardableResult
+    public func setDefaultOutputDevice(id: AudioDeviceID) -> Bool {
+        var propertyAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var devID = id
+        let status = AudioObjectSetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &propertyAddress,
+            0,
+            nil,
+            UInt32(MemoryLayout<AudioDeviceID>.size),
+            &devID
+        )
+        return status == noErr
+    }
+
+    /// Sets the macOS default system input device.
+    @discardableResult
+    public func setDefaultInputDevice(id: AudioDeviceID) -> Bool {
+        var propertyAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var devID = id
+        let status = AudioObjectSetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &propertyAddress,
+            0,
+            nil,
+            UInt32(MemoryLayout<AudioDeviceID>.size),
+            &devID
+        )
+        return status == noErr
+    }
+
+    /// Sets the hardware buffer frame size (e.g. 64, 128, 256, 512, 1024 frames) on a device.
+    @discardableResult
+    public func setBufferFrameSize(deviceID: AudioDeviceID, frameSize: UInt32) -> Bool {
+        var propertyAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyBufferFrameSize,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var size = frameSize
+        let status = AudioObjectSetPropertyData(
+            deviceID,
+            &propertyAddress,
+            0,
+            nil,
+            UInt32(MemoryLayout<UInt32>.size),
+            &size
+        )
+        return status == noErr
+    }
+
+    /// Queries the hardware buffer frame size for a device.
+    public func getBufferFrameSize(deviceID: AudioDeviceID) -> UInt32 {
+        var propertyAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyBufferFrameSize,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var size: UInt32 = 512
+        var dataSize = UInt32(MemoryLayout<UInt32>.size)
+        AudioObjectGetPropertyData(deviceID, &propertyAddress, 0, nil, &dataSize, &size)
+        return size
+    }
+
+    public func getDeviceLatency(id: AudioDeviceID, isInput: Bool) -> UInt32 {
+        var propertyAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyLatency,
+            mScope: isInput ? kAudioDevicePropertyScopeInput : kAudioDevicePropertyScopeOutput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var latency: UInt32 = 0
+        var dataSize = UInt32(MemoryLayout<UInt32>.size)
+        AudioObjectGetPropertyData(id, &propertyAddress, 0, nil, &dataSize, &latency)
+        return latency
+    }
+
+    public func getDeviceSafetyOffset(id: AudioDeviceID, isInput: Bool) -> UInt32 {
+        var propertyAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertySafetyOffset,
+            mScope: isInput ? kAudioDevicePropertyScopeInput : kAudioDevicePropertyScopeOutput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var offset: UInt32 = 0
+        var dataSize = UInt32(MemoryLayout<UInt32>.size)
+        AudioObjectGetPropertyData(id, &propertyAddress, 0, nil, &dataSize, &offset)
+        return offset
+    }
+
     private func buildAudioDevice(id: AudioDeviceID, defaultOut: AudioDeviceID, defaultIn: AudioDeviceID) -> AudioDevice? {
         let name = getDeviceName(id: id)
         let uid = getDeviceUID(id: id)
@@ -108,6 +206,10 @@ public final class CoreAudioManager: @unchecked Sendable {
 
         let sampleRate = getDeviceSampleRate(id: id)
         let transport = getDeviceTransportType(id: id)
+        let bufferFrames = getBufferFrameSize(deviceID: id)
+        let isOut = outChannels > 0
+        let latency = getDeviceLatency(id: id, isInput: !isOut)
+        let safety = getDeviceSafetyOffset(id: id, isInput: !isOut)
 
         return AudioDevice(
             id: id,
@@ -120,6 +222,9 @@ public final class CoreAudioManager: @unchecked Sendable {
             sampleRates: [sampleRate],
             currentSampleRate: sampleRate,
             channelCount: max(inChannels, outChannels),
+            bufferFrameSize: bufferFrames,
+            latencyFrames: latency,
+            safetyOffsetFrames: safety,
             transportType: transport
         )
     }
@@ -167,7 +272,7 @@ public final class CoreAudioManager: @unchecked Sendable {
         )
         var outAddress = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyStreamConfiguration,
-            mScope: kAudioDevicePropertyScopeOutput,
+            mScope: kAudioObjectPropertyScopeOutput,
             mElement: kAudioObjectPropertyElementMain
         )
 
@@ -262,6 +367,19 @@ public final class CoreAudioManager: @unchecked Sendable {
             let devs = self.fetchAllDevices()
             let matched = devs.first(where: { $0.id == defaultId })
             self.onDefaultOutputChanged?(matched)
+        }
+
+        var defaultInAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &defaultInAddress, nil) { [weak self] _, _ in
+            guard let self = self else { return }
+            let defaultId = self.getDefaultInputDeviceID()
+            let devs = self.fetchAllDevices()
+            let matched = devs.first(where: { $0.id == defaultId })
+            self.onDefaultInputChanged?(matched)
         }
     }
 }

@@ -13,6 +13,9 @@ public struct AudioDevice: Identifiable, Codable, Equatable, Sendable {
     public var sampleRates: [Double]
     public var currentSampleRate: Double
     public var channelCount: Int
+    public var bufferFrameSize: UInt32
+    public var latencyFrames: UInt32
+    public var safetyOffsetFrames: UInt32
     public var transportType: TransportType
 
     public enum TransportType: String, Codable, Sendable {
@@ -51,6 +54,9 @@ public struct AudioDevice: Identifiable, Codable, Equatable, Sendable {
         sampleRates: [Double] = [44100.0, 48000.0, 96000.0],
         currentSampleRate: Double = 48000.0,
         channelCount: Int = 2,
+        bufferFrameSize: UInt32 = 512,
+        latencyFrames: UInt32 = 0,
+        safetyOffsetFrames: UInt32 = 0,
         transportType: TransportType = .builtIn
     ) {
         self.id = id
@@ -64,7 +70,16 @@ public struct AudioDevice: Identifiable, Codable, Equatable, Sendable {
         self.sampleRates = sampleRates
         self.currentSampleRate = currentSampleRate
         self.channelCount = channelCount
+        self.bufferFrameSize = bufferFrameSize
+        self.latencyFrames = latencyFrames
+        self.safetyOffsetFrames = safetyOffsetFrames
         self.transportType = transportType
     }
-}
 
+    /// Latency in milliseconds based on current sample rate and buffer frames.
+    public var latencyMs: Double {
+        guard currentSampleRate > 0 else { return 0.0 }
+        let totalFrames = Double(bufferFrameSize + latencyFrames + safetyOffsetFrames)
+        return (totalFrames / currentSampleRate) * 1000.0
+    }
+}

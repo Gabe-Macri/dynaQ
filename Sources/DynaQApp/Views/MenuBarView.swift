@@ -31,14 +31,34 @@ public struct MenuBarView: View {
 
             Divider().background(DynaQTheme.surfaceBorder)
 
-            // Current Device
-            HStack {
-                Image(systemName: state.currentDevice?.transportType.sfSymbol ?? "speaker.wave.2")
-                    .foregroundColor(DynaQTheme.cyan)
-                Text(state.currentDevice?.name ?? "Default Output")
-                    .font(.system(size: 11, weight: .semibold))
-                    .lineLimit(1)
+            // Current Hardware I/O Summary
+            VStack(alignment: .leading, spacing: 3) {
+                HStack {
+                    Image(systemName: "mic.fill")
+                        .font(.system(size: 9))
+                        .foregroundColor(DynaQTheme.blue)
+                    Text(state.selectedInputDevice?.name ?? "Default Input")
+                        .font(.system(size: 10, weight: .medium))
+                        .lineLimit(1)
+                }
+                HStack {
+                    Image(systemName: "speaker.wave.2.fill")
+                        .font(.system(size: 9))
+                        .foregroundColor(DynaQTheme.cyan)
+                    Text(state.selectedOutputDevice?.name ?? "Default Output")
+                        .font(.system(size: 10, weight: .medium))
+                        .lineLimit(1)
+                }
+                Text(String(format: "%.0f Hz • %d spls • %.1f ms latency",
+                            state.selectedOutputDevice?.currentSampleRate ?? 48000.0,
+                            state.selectedBufferSize,
+                            state.roundtripLatencyMs))
+                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                    .foregroundColor(DynaQTheme.textMuted)
+                    .padding(.top, 2)
             }
+
+            Divider().background(DynaQTheme.surfaceBorder)
 
             // Quick Preset Selection
             VStack(alignment: .leading, spacing: 4) {
@@ -46,7 +66,7 @@ public struct MenuBarView: View {
                     .font(.system(size: 9, weight: .bold, design: .monospaced))
                     .foregroundColor(DynaQTheme.textMuted)
 
-                ForEach(state.presets.prefix(4)) { preset in
+                ForEach(state.presets.prefix(5)) { preset in
                     Button(action: {
                         state.selectPreset(preset)
                     }) {
@@ -90,8 +110,7 @@ public struct MenuBarView: View {
             }
         }
         .padding(12)
-        .frame(width: 260)
+        .frame(width: 270)
         .background(DynaQTheme.bg)
     }
 }
-

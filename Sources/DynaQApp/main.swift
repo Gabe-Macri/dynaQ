@@ -8,16 +8,15 @@ import DynaQAudioDriver
 
 func printHelp() {
     print("""
-    dynaQ - Professional System-Wide Audio Management Suite
-    Version 1.0.0 (macOS)
+    dynaQ — Professional System-Wide Audio Management Suite
+    Version 1.0.0 (macOS CoreAudio)
 
     USAGE:
       dynaQ [options]
 
     OPTIONS:
       --gui                 Launch the full graphical studio interface (default)
-      --list-devices        List all discovered CoreAudio input & output hardware
-      --test-dsp            Run real-time biquad & FFT benchmark test
+      --list-devices        Enumerate CoreAudio I/O hardware, channels, and latencies
       --driver-status       Check dynaQ Virtual Audio Driver installation status
       --help, -h            Show this help reference
     """)
@@ -31,60 +30,16 @@ func listDevices() {
         return
     }
 
-    print("\n------------------------------------------------------------")
-    print(String(format: "%-4@ | %-6@ | %-8@ | %@", "ID", "DIR", "RATE", "NAME"))
-    print("------------------------------------------------------------")
+    print("\n--------------------------------------------------------------------------------")
+    print(String(format: "%-4@ | %-6@ | %-8@ | %-8@ | %-8@ | %@", "ID", "DIR", "RATE", "BUFFER", "LATENCY", "NAME"))
+    print("--------------------------------------------------------------------------------")
     for d in devices {
         let dir = d.isOutput && d.isInput ? "IN/OUT" : (d.isOutput ? "OUTPUT" : "INPUT")
-        let defMark = d.isDefaultOutput ? "*" : " "
-        print(String(format: "%-4d | %-6@ | %5.0f Hz | %@%@", d.id, dir, d.currentSampleRate, d.name, defMark))
+        let defMark = d.isDefaultOutput ? " [DEFAULT OUT]" : (d.isDefaultInput ? " [DEFAULT IN]" : "")
+        let latStr = String(format: "%.1f ms", d.latencyMs)
+        print(String(format: "%-4d | %-6@ | %5.0f Hz | %4d spl | %-8@ | %@%@", d.id, dir, d.currentSampleRate, d.bufferFrameSize, latStr, d.name, defMark))
     }
-    print("------------------------------------------------------------")
-    print("* = Current default system output\n")
-}
-
-func runDSPTest() {
-    print("Running dynaQ DSP Filter & FFT Benchmark...")
-    let sampleRate: Float = 48000.0
-    let engine = ParametricEQEngine(profile: DefaultPresets.harmanHeadphoneTarget, sampleRate: sampleRate)
-    let limiter = TruePeakLimiter(ceilingDB: -0.2)
-    let analyzer = SpectrumAnalyzer(fftSize: 1024, binCount: 64, sampleRate: sampleRate)
-    let meter = LoudnessMeter()
-
-    let bufferSize = 512
-    var left = [Float](repeating: 0.5, count: bufferSize)
-    var right = [Float](repeating: 0.5, count: bufferSize)
-
-    let iterations = 2000
-    let startTime = DispatchTime.now().uptimeNanoseconds
-
-    for _ in 0..<iterations {
-        left.withUnsafeMutableBufferPointer { lPtr in
-            right.withUnsafeMutableBufferPointer { rPtr in
-                engine.processStereo(left: lPtr.baseAddress!, right: rPtr.baseAddress!, count: bufferSize)
-                limiter.processStereo(left: lPtr.baseAddress!, right: rPtr.baseAddress!, count: bufferSize)
-
-                var mono = [Float](repeating: 0.0, count: bufferSize)
-                for i in 0..<bufferSize {
-                    mono[i] = (lPtr[i] + rPtr[i]) * 0.5
-                }
-                mono.withUnsafeBufferPointer { mPtr in
-                    analyzer.feed(samples: mPtr.baseAddress!, count: bufferSize)
-                }
-
-                _ = meter.processStereo(left: lPtr.baseAddress!, right: rPtr.baseAddress!, count: bufferSize)
-            }
-        }
-    }
-
-    let elapsedMs = Double(DispatchTime.now().uptimeNanoseconds - startTime) / 1_000_000.0
-    let totalProcessedFrames = Double(iterations * bufferSize)
-    let audioDurationSec = totalProcessedFrames / Double(sampleRate)
-
-    print(String(format: "DSP benchmark completed in %.2f ms", elapsedMs))
-    print(String(format: "Processed %.2f seconds of 48kHz stereo audio across 7 biquad bands + limiter + FFT", audioDurationSec))
-    print(String(format: "Real-time performance factor: %.1fx faster than real-time", (audioDurationSec * 1000.0) / elapsedMs))
-    print("DSP engine verification passed successfully!")
+    print("--------------------------------------------------------------------------------\n")
 }
 
 func checkDriverStatus() {
@@ -117,7 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.openStudioWindow()
         }
         let pop = NSPopover()
-        pop.contentSize = NSSize(width: 260, height: 260)
+        pop.contentSize = NSSize(width: 270, height: 280)
         pop.behavior = .transient
         pop.contentViewController = NSHostingController(rootView: popoverView)
         self.popover = pop
@@ -143,7 +98,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let hostingController = NSHostingController(rootView: mainView)
 
         let w = NSWindow(
-            contentRect: NSRect(x: 100, y: 100, width: 860, height: 680),
+            contentRect: NSRect(x: 100, y: 100, width: 940, height: 700),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
@@ -151,14 +106,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         w.center()
         w.title = "dynaQ — Professional System-Wide Audio Suite"
         w.contentViewController = hostingController
-        w.minSize = NSSize(width: 820, height: 620)
+        w.minSize = NSSize(width: 880, height: 640)
         w.makeKeyAndOrderFront(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
         self.window = w
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        // Keep running in background menu bar
         return false
     }
 }
@@ -173,9 +127,6 @@ if args.contains("--help") || args.contains("-h") {
 } else if args.contains("--list-devices") {
     listDevices()
     exit(0)
-} else if args.contains("--test-dsp") {
-    runDSPTest()
-    exit(0)
 } else if args.contains("--driver-status") {
     checkDriverStatus()
     exit(0)
@@ -187,4 +138,3 @@ let delegate = AppDelegate()
 app.delegate = delegate
 app.setActivationPolicy(.regular)
 _ = NSApplicationMain(CommandLine.argc, CommandLine.unsafeArgv)
-

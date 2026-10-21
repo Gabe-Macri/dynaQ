@@ -1,5 +1,26 @@
 import Foundation
 
+/// Stereo channel routing per equalizer band (Pro M/S processing).
+public enum BandRouting: String, Codable, CaseIterable, Sendable, Identifiable {
+    case stereo = "Stereo"
+    case mid = "Mid (M)"
+    case side = "Side (S)"
+    case left = "Left (L)"
+    case right = "Right (R)"
+
+    public var id: String { rawValue }
+
+    public var shortBadge: String {
+        switch self {
+        case .stereo: return "ST"
+        case .mid: return "M"
+        case .side: return "S"
+        case .left: return "L"
+        case .right: return "R"
+        }
+    }
+}
+
 /// Represents a single equalizer band with static and dynamic capabilities.
 public struct EQBand: Identifiable, Codable, Equatable, Sendable {
     public var id: UUID
@@ -8,6 +29,7 @@ public struct EQBand: Identifiable, Codable, Equatable, Sendable {
     public var gain: Float          // -24.0 to +24.0 dB
     public var q: Float             // 0.1 to 18.0 (resonance / quality factor)
     public var filterType: FilterType
+    public var routing: BandRouting
     public var isEnabled: Bool
     public var isSolo: Bool
 
@@ -26,6 +48,7 @@ public struct EQBand: Identifiable, Codable, Equatable, Sendable {
         gain: Float = 0.0,
         q: Float = 1.414,
         filterType: FilterType = .bell,
+        routing: BandRouting = .stereo,
         isEnabled: Bool = true,
         isSolo: Bool = false,
         isDynamic: Bool = false,
@@ -41,6 +64,7 @@ public struct EQBand: Identifiable, Codable, Equatable, Sendable {
         self.gain = min(max(gain, -24.0), 24.0)
         self.q = min(max(q, 0.1), 18.0)
         self.filterType = filterType
+        self.routing = routing
         self.isEnabled = isEnabled
         self.isSolo = isSolo
         self.isDynamic = isDynamic
@@ -73,4 +97,3 @@ public struct EQBand: Identifiable, Codable, Equatable, Sendable {
         return String(format: "Q %.2f", q)
     }
 }
-

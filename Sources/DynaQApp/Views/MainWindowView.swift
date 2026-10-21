@@ -12,63 +12,63 @@ public struct MainWindowView: View {
     public init() {}
 
     public var body: some View {
-        VStack(spacing: 12) {
-            // Header Bar
-            HStack(spacing: 14) {
-                // Logo & Engine Indicator
+        VStack(spacing: 10) {
+            // Header Bar: Studio Branding, Preset, and Hardware I/O
+            HStack(spacing: 12) {
+                // Logo & Engine Power Switch
                 HStack(spacing: 8) {
-                    Image(systemName: "waveform.circle.fill")
-                        .font(.system(size: 20))
-                        .foregroundColor(DynaQTheme.cyan)
+                    Button(action: {
+                        state.toggleEnginePower()
+                    }) {
+                        HStack(spacing: 6) {
+                            Circle()
+                                .fill(state.isEngineOnline ? DynaQTheme.green : DynaQTheme.red)
+                                .frame(width: 8, height: 8)
+                                .shadow(color: state.isEngineOnline ? DynaQTheme.green : .clear, radius: 4)
 
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("dynaQ")
-                            .font(.system(size: 15, weight: .black, design: .monospaced))
-                            .foregroundColor(DynaQTheme.textPrimary)
-                        Text("PRO AUDIO SUITE")
-                            .font(.system(size: 8, weight: .bold, design: .monospaced))
-                            .foregroundColor(DynaQTheme.cyan)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text("dynaQ")
+                                    .font(.system(size: 14, weight: .black, design: .monospaced))
+                                    .foregroundColor(DynaQTheme.textPrimary)
+                                Text(state.isEngineOnline ? "LIVE I/O" : "STANDBY")
+                                    .font(.system(size: 7, weight: .heavy, design: .monospaced))
+                                    .foregroundColor(state.isEngineOnline ? DynaQTheme.green : DynaQTheme.textMuted)
+                            }
+                        }
                     }
+                    .buttonStyle(.plain)
                 }
 
-                Divider().background(DynaQTheme.surfaceBorder).frame(height: 24)
+                Divider().background(DynaQTheme.surfaceBorder).frame(height: 22)
 
-                // Preset Picker
+                // Preset Selector
                 PresetPickerView(
-                    currentProfile: $state.currentProfile,
+                    currentProfile: Binding(
+                        get: { state.currentProfile },
+                        set: { state.currentProfile = $0 }
+                    ),
                     presets: state.presets,
                     onSelectPreset: { state.selectPreset($0) },
                     onSaveCustom: { state.saveCustomPreset(name: $0) }
                 )
 
-                // Output Device Selector
-                DeviceSelectorView(
-                    devices: state.devices,
-                    currentDevice: state.currentDevice,
-                    onSelectDevice: { state.currentDevice = $0 }
-                )
-
                 Spacer()
 
-                // Test Tone Generator Button (Instant audio/spectrum simulation)
-                Button(action: {
-                    state.toggleDemoAudio()
-                }) {
-                    HStack(spacing: 5) {
-                        Image(systemName: state.isDemoAudioRunning ? "stop.fill" : "play.fill")
-                            .font(.system(size: 9))
-                        Text(state.isDemoAudioRunning ? "STOP TEST TONE" : "TEST TONE")
-                            .font(.system(size: 9, weight: .bold, design: .monospaced))
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(state.isDemoAudioRunning ? DynaQTheme.amber.opacity(0.8) : DynaQTheme.surfaceElevated)
-                    .foregroundColor(state.isDemoAudioRunning ? .black : DynaQTheme.textSecondary)
-                    .cornerRadius(6)
-                }
-                .buttonStyle(.plain)
+                // Complete Hardware I/O Selector (Input, Output, Buffer, Latency)
+                DeviceSelectorView(
+                    devices: state.devices,
+                    currentInput: state.selectedInputDevice,
+                    currentOutput: state.selectedOutputDevice,
+                    bufferSize: state.selectedBufferSize,
+                    latencyMs: state.roundtripLatencyMs,
+                    feedbackGuard: state.feedbackProtection,
+                    onSelectInput: { state.setInputDevice($0) },
+                    onSelectOutput: { state.setOutputDevice($0) },
+                    onSelectBufferSize: { state.setBufferSize($0) },
+                    onToggleFeedbackGuard: { state.feedbackProtection.toggle() }
+                )
 
-                // App Routing Toggle
+                // Per-App Routing Drawer Toggle
                 Button(action: {
                     withAnimation(.easeInOut(duration: 0.2)) {
                         showAppRouting.toggle()
@@ -80,29 +80,35 @@ public struct MainWindowView: View {
                             .font(.system(size: 9, weight: .bold, design: .monospaced))
                     }
                     .padding(.horizontal, 8)
-                    .padding(.vertical, 6)
+                    .padding(.vertical, 5)
                     .background(showAppRouting ? DynaQTheme.cyan.opacity(0.2) : DynaQTheme.surfaceElevated)
                     .foregroundColor(showAppRouting ? DynaQTheme.cyan : DynaQTheme.textSecondary)
-                    .cornerRadius(6)
+                    .cornerRadius(5)
                 }
                 .buttonStyle(.plain)
             }
             .padding(.horizontal, 16)
-            .padding(.top, 14)
+            .padding(.top, 12)
 
-            // Primary Interactive Parametric EQ Curve & Spectrum Visualizer
+            // Primary Interactive Parametric EQ Curve & Live Spectrum Visualizer
             EQCurveView(
-                profile: $state.currentProfile,
+                profile: Binding(
+                    get: { state.currentProfile },
+                    set: { state.currentProfile = $0 }
+                ),
                 selectedBandID: $state.selectedBandID,
                 spectrumDB: state.spectrumDB,
-                sampleRate: Float(state.currentDevice?.currentSampleRate ?? 48000.0)
+                sampleRate: Float(state.selectedOutputDevice?.currentSampleRate ?? 48000.0)
             )
-            .frame(minHeight: 260)
+            .frame(minHeight: 270)
             .padding(.horizontal, 16)
 
-            // Selected Band Parameter Inspector & Dynamic EQ
+            // Selected Band Parameter Inspector, M/S Routing & Dynamic EQ
             EQBandInspectorView(
-                profile: $state.currentProfile,
+                profile: Binding(
+                    get: { state.currentProfile },
+                    set: { state.currentProfile = $0 }
+                ),
                 selectedBandID: $state.selectedBandID
             )
             .padding(.horizontal, 16)
@@ -117,17 +123,28 @@ public struct MainWindowView: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 
-            // Master Section (Preamp, Master, Limiter, Meters)
+            // Master Section (Preamp, Master, Phase Invert, Limiter, A/B Compare, VU Meters)
             MasterSectionView(
-                profile: $state.currentProfile,
+                profile: Binding(
+                    get: { state.currentProfile },
+                    set: { state.currentProfile = $0 }
+                ),
                 meter: state.currentMeter,
-                onResetClip: { state.resetClip() }
+                activeSlot: state.activeSlot.rawValue,
+                onSwitchSlot: { slot in
+                    state.switchToSlot(slot == "A" ? .slotA : .slotB)
+                },
+                onCopySlot: {
+                    state.copyActiveSlotToInactive()
+                },
+                onResetClip: {
+                    state.resetClip()
+                }
             )
             .padding(.horizontal, 16)
-            .padding(.bottom, 14)
+            .padding(.bottom, 12)
         }
-        .frame(minWidth: 840, minHeight: 640)
+        .frame(minWidth: 920, minHeight: 680)
         .background(DynaQTheme.bg)
     }
 }
-

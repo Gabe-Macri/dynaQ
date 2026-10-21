@@ -2,7 +2,7 @@ import SwiftUI
 import DynaQCore
 import DynaQDSP
 
-/// Interactive Studio Parametric EQ Curve with real-time FFT spectrum background and draggable nodes.
+/// High-resolution Studio Parametric EQ Curve with real-time FFT spectrum background and draggable nodes.
 public struct EQCurveView: View {
     @Binding public var profile: EQProfile
     @Binding public var selectedBandID: UUID?
@@ -13,6 +13,8 @@ public struct EQCurveView: View {
     private let maxFreq: Float = 20000.0
     private let minDB: Float = -24.0
     private let maxDB: Float = 24.0
+
+    @State private var hoveredBandIndex: Int? = nil
 
     public init(
         profile: Binding<EQProfile>,
@@ -32,16 +34,17 @@ public struct EQCurveView: View {
                 // 1. Dark Studio Background & Grid
                 Canvas { context, size in
                     drawGrid(context: context, size: size)
+                    drawOctaveBands(context: context, size: size)
                 }
 
-                // 2. Real-time Spectrum Analyzer Layer
+                // 2. Real-time Live Audio Spectrum Analyzer Layer
                 if !spectrumDB.isEmpty {
                     SpectrumShape(spectrumDB: spectrumDB)
                         .fill(
                             LinearGradient(
                                 gradient: Gradient(colors: [
-                                    DynaQTheme.cyan.opacity(0.35),
-                                    DynaQTheme.blue.opacity(0.15),
+                                    DynaQTheme.cyan.opacity(0.32),
+                                    DynaQTheme.blue.opacity(0.12),
                                     Color.clear
                                 ]),
                                 startPoint: .top,
@@ -62,9 +65,9 @@ public struct EQCurveView: View {
                     ),
                     style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round)
                 )
-                .shadow(color: DynaQTheme.cyan.opacity(0.4), radius: 6)
+                .shadow(color: DynaQTheme.cyan.opacity(0.35), radius: 6)
 
-                // 4. Interactive Draggable Band Nodes
+                // 4. Interactive Draggable Band Nodes with Routing Badges & Tooltips
                 ForEach(profile.bands.indices, id: \.self) { index in
                     let band = profile.bands[index]
                     let isSelected = (selectedBandID == band.id)
@@ -138,13 +141,39 @@ public struct EQCurveView: View {
 
     // MARK: - Drawing Routines
 
+    private func drawOctaveBands(context: GraphicsContext, size: CGSize) {
+        // Octave labels along the top edge
+        let octaves: [(label: String, startF: Float, endF: Float)] = [
+            ("SUB", 20, 60),
+            ("BASS", 60, 250),
+            ("LOW MID", 250, 500),
+            ("MID", 500, 2000),
+            ("HIGH MID", 2000, 4000),
+            ("PRESENCE", 4000, 6000),
+            ("BRILLIANCE", 6000, 20000)
+        ]
+
+        for oct in octaves {
+            let xStart = xFor(frequency: oct.startF, width: size.width)
+            let xEnd = xFor(frequency: oct.endF, width: size.width)
+            let midX = (xStart + xEnd) * 0.5
+
+            context.draw(
+                Text(oct.label)
+                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                    .foregroundColor(DynaQTheme.textMuted.opacity(0.7)),
+                at: CGPoint(x: midX, y: 12)
+            )
+        }
+    }
+
     private func drawGrid(context: GraphicsContext, size: CGSize) {
         // Frequency lines (vertical)
         let gridFrequencies: [Float] = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000]
         for f in gridFrequencies {
             let x = xFor(frequency: f, width: size.width)
             var path = Path()
-            path.move(to: CGPoint(x: x, y: 0))
+            path.move(to: CGPoint(x: x, y: 20))
             path.addLine(to: CGPoint(x: x, y: size.height))
             context.stroke(path, with: .color(DynaQTheme.gridLine), lineWidth: 1)
 
@@ -178,7 +207,7 @@ public struct EQCurveView: View {
     }
 
     private func drawCompositeCurve(path: inout Path, size: CGSize) {
-        let samplePoints = 120
+        let samplePoints = 140
         let logMin = log10(minFreq)
         let logMax = log10(maxFreq)
 
@@ -210,7 +239,7 @@ public struct EQCurveView: View {
     }
 }
 
-// MARK: - Draggable Band Handle
+// MARK: - Draggable Band Handle with Tooltip
 
 private struct BandNode: View {
     let band: EQBand
@@ -220,8 +249,31 @@ private struct BandNode: View {
     let onDrag: (CGPoint) -> Void
     let onSelect: () -> Void
 
+    @State private var isDragging: Bool = false
+
     var body: some View {
         ZStack {
+            // Live Floating Tooltip when dragged or selected
+            if isSelected || isDragging {
+                VStack(spacing: 2) {
+                    Text("\(band.formattedFrequency) • \(band.formattedGain)")
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .foregroundColor(.white)
+                    Text("\(band.filterType.shortName) | \(band.routing.shortBadge)")
+                        .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                        .foregroundColor(color)
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(DynaQTheme.surface.opacity(0.95))
+                .cornerRadius(4)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(color.opacity(0.5), lineWidth: 1)
+                )
+                .offset(y: -28)
+            }
+
             // Glow halo when selected
             if isSelected {
                 Circle()
@@ -232,12 +284,12 @@ private struct BandNode: View {
             // Outer node border
             Circle()
                 .fill(DynaQTheme.surface)
-                .frame(width: 20, height: 20)
+                .frame(width: 22, height: 22)
                 .overlay(
                     Circle().stroke(color, lineWidth: isSelected ? 2.5 : 1.5)
                 )
 
-            // Center band index
+            // Center band index & routing badge
             Text("\(band.index + 1)")
                 .font(.system(size: 9, weight: .heavy, design: .monospaced))
                 .foregroundColor(isSelected ? Color.white : color)
@@ -246,8 +298,12 @@ private struct BandNode: View {
         .gesture(
             DragGesture()
                 .onChanged { gesture in
+                    isDragging = true
                     onSelect()
                     onDrag(gesture.location)
+                }
+                .onEnded { _ in
+                    isDragging = false
                 }
         )
         .onTapGesture {
@@ -270,7 +326,6 @@ private struct SpectrumShape: Shape {
         let stepX = rect.width / CGFloat(max(spectrumDB.count - 1, 1))
         for (i, db) in spectrumDB.enumerated() {
             let x = CGFloat(i) * stepX
-            // Map -80dB ... 0dB to rect.height ... 0
             let norm = CGFloat(min(max((db + 80.0) / 80.0, 0.0), 1.0))
             let y = rect.height - norm * rect.height
             path.addLine(to: CGPoint(x: x, y: y))
@@ -281,4 +336,3 @@ private struct SpectrumShape: Shape {
         return path
     }
 }
-

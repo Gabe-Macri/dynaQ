@@ -2,7 +2,7 @@ import Foundation
 import Accelerate
 import DynaQCore
 
-/// Core DSP Engine executing multi-band parametric and dynamic equalization.
+/// Core DSP Engine executing multi-band parametric, dynamic, and Mid/Side equalization.
 public final class ParametricEQEngine: @unchecked Sendable {
     private let lock = NSLock()
     private var sampleRate: Float = 48000.0
@@ -10,6 +10,10 @@ public final class ParametricEQEngine: @unchecked Sendable {
     private var profile: EQProfile
     private var bandFilters: [BiquadFilter] = []
     private var dynamicProcessors: [DynamicEQProcessor] = []
+
+    // Scratch buffers for M/S and channel routing
+    private var midScratch: [Float] = []
+    private var sideScratch: [Float] = []
 
     // Preamp and Master linear factors
     private var preampLinear: Float = 1.0
@@ -127,7 +131,15 @@ public final class ParametricEQEngine: @unchecked Sendable {
         let localBands = profile.bands
         let pLinear = preampLinear
         let mLinear = masterLinear
+        let pInvert = profile.phaseInvert
+        let mMode = profile.monitorMode
         lock.unlock()
+
+        // Ensure scratch buffers capacity
+        if midScratch.count < count {
+            midScratch = [Float](repeating: 0.0, count: count)
+            sideScratch = [Float](repeating: 0.0, count: count)
+        }
 
         // 1. Preamp Gain
         if abs(pLinear - 1.0) > 0.001 {
@@ -136,12 +148,14 @@ public final class ParametricEQEngine: @unchecked Sendable {
             vDSP_vsmul(right, 1, &factor, right, 1, vDSP_Length(count))
         }
 
-        // 2. Process Cascade of Biquad Filter Bands
+        // 2. Process Cascade of Biquad Filter Bands with M/S and Channel Routing
         for i in 0..<bandFilters.count {
             let filter = bandFilters[i]
             guard !filter.isBypassed else { continue }
 
             let band = localBands[i]
+
+            // Dynamic EQ Modulation
             if band.isDynamic {
                 let dyn = dynamicProcessors[i]
                 let offsetDB = dyn.processBlock(samples: left, count: count, sampleRate: sampleRate, band: band)
@@ -157,11 +171,97 @@ public final class ParametricEQEngine: @unchecked Sendable {
                 }
             }
 
-            filter.process(buffer: left, count: count, channel: 0)
-            filter.process(buffer: right, count: count, channel: 1)
+            // Route processing based on band mode
+            switch band.routing {
+            case .stereo:
+                filter.process(buffer: left, count: count, channel: 0)
+                filter.process(buffer: right, count: count, channel: 1)
+
+            case .left:
+                filter.process(buffer: left, count: count, channel: 0)
+
+            case .right:
+                filter.process(buffer: right, count: count, channel: 1)
+
+            case .mid:
+                // Mid = (L + R) * 0.5, Side = (L - R) * 0.5
+                midScratch.withUnsafeMutableBufferPointer { mPtr in
+                    sideScratch.withUnsafeMutableBufferPointer { sPtr in
+                        for n in 0..<count {
+                            let l = left[n]
+                            let r = right[n]
+                            mPtr[n] = (l + r) * 0.5
+                            sPtr[n] = (l - r) * 0.5
+                        }
+                        // Filter only the Mid component
+                        filter.process(buffer: mPtr.baseAddress!, count: count, channel: 0)
+                        // Reconstruct L = M + S, R = M - S
+                        for n in 0..<count {
+                            let m = mPtr[n]
+                            let s = sPtr[n]
+                            left[n] = m + s
+                            right[n] = m - s
+                        }
+                    }
+                }
+
+            case .side:
+                midScratch.withUnsafeMutableBufferPointer { mPtr in
+                    sideScratch.withUnsafeMutableBufferPointer { sPtr in
+                        for n in 0..<count {
+                            let l = left[n]
+                            let r = right[n]
+                            mPtr[n] = (l + r) * 0.5
+                            sPtr[n] = (l - r) * 0.5
+                        }
+                        // Filter only the Side component
+                        filter.process(buffer: sPtr.baseAddress!, count: count, channel: 1)
+                        // Reconstruct L = M + S, R = M - S
+                        for n in 0..<count {
+                            let m = mPtr[n]
+                            let s = sPtr[n]
+                            left[n] = m + s
+                            right[n] = m - s
+                        }
+                    }
+                }
+            }
         }
 
-        // 3. Master Output Gain
+        // 3. Monitor Mode Auditioning
+        switch mMode {
+        case .stereo:
+            break
+        case .mono:
+            for n in 0..<count {
+                let mono = (left[n] + right[n]) * 0.5
+                left[n] = mono
+                right[n] = mono
+            }
+        case .sides:
+            for n in 0..<count {
+                let side = (left[n] - right[n]) * 0.5
+                left[n] = side
+                right[n] = -side
+            }
+        case .leftOnly:
+            for n in 0..<count {
+                right[n] = 0.0
+            }
+        case .rightOnly:
+            for n in 0..<count {
+                left[n] = 0.0
+            }
+        }
+
+        // 4. Polarity / Phase Invert (180°)
+        if pInvert {
+            var negOne: Float = -1.0
+            vDSP_vsmul(left, 1, &negOne, left, 1, vDSP_Length(count))
+            vDSP_vsmul(right, 1, &negOne, right, 1, vDSP_Length(count))
+        }
+
+        // 5. Master Output Gain
         if abs(mLinear - 1.0) > 0.001 {
             var factor = mLinear
             vDSP_vsmul(left, 1, &factor, left, 1, vDSP_Length(count))
@@ -196,4 +296,3 @@ public final class ParametricEQEngine: @unchecked Sendable {
         return totalDB
     }
 }
-
