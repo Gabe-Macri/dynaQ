@@ -112,4 +112,3 @@ void c_dsp_deinterleave_stereo(const float* interleaved, float* left, float* rig
 #endif
 
 #endif // CDSPKERNEL_H
-
