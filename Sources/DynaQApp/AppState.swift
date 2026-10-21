@@ -35,7 +35,8 @@ public final class AppState: ObservableObject {
     @Published public var presets: [EQProfile] = []
     @Published public var selectedBandID: UUID?
 
-    // Audio Hardware I/O & Latency
+    // Audio Hardware I/O & Routing Mode
+    @Published public var captureSource: AudioCaptureSource = .systemAudio
     @Published public var devices: [AudioDevice] = []
     @Published public var selectedInputDevice: AudioDevice?
     @Published public var selectedOutputDevice: AudioDevice?
@@ -141,9 +142,9 @@ public final class AppState: ObservableObject {
         do {
             let inID = selectedInputDevice?.id ?? coreAudioManager.getDefaultInputDeviceID()
             let outID = selectedOutputDevice?.id ?? coreAudioManager.getDefaultOutputDeviceID()
-            try engineManager.start(inputDeviceID: inID, outputDeviceID: outID)
+            try engineManager.start(captureSource: captureSource, inputDeviceID: inID, outputDeviceID: outID)
             isEngineOnline = true
-            statusMessage = "DSP Engine Online"
+            statusMessage = captureSource == .systemAudio ? "Live System Audio Tap Active" : "Hardware Input Stream Active"
         } catch {
             isEngineOnline = false
             statusMessage = "Audio I/O Error: \(error.localizedDescription)"
@@ -162,6 +163,11 @@ public final class AppState: ObservableObject {
         } else {
             startLiveSystemAudio()
         }
+    }
+
+    public func setCaptureSource(_ source: AudioCaptureSource) {
+        self.captureSource = source
+        try? engineManager.setCaptureSource(source)
     }
 
     public func setInputDevice(_ device: AudioDevice) {

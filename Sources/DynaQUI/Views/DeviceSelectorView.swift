@@ -1,37 +1,44 @@
 import SwiftUI
 import DynaQCore
+import DynaQAudioDriver
 
-/// Pro Audio Hardware I/O selector bar showing Input, Output, Buffer Size, and Live Latency.
+/// Pro Audio Hardware I/O selector bar showing Capture Source, Input, Output, Buffer Size, and Live Latency.
 public struct DeviceSelectorView: View {
+    public let captureSource: AudioCaptureSource
     public let devices: [AudioDevice]
     public let currentInput: AudioDevice?
     public let currentOutput: AudioDevice?
     public let bufferSize: UInt32
     public let latencyMs: Double
     public let feedbackGuard: Bool
+    public let onSelectCaptureSource: (AudioCaptureSource) -> Void
     public let onSelectInput: (AudioDevice) -> Void
     public let onSelectOutput: (AudioDevice) -> Void
     public let onSelectBufferSize: (UInt32) -> Void
     public let onToggleFeedbackGuard: () -> Void
 
     public init(
+        captureSource: AudioCaptureSource = .systemAudio,
         devices: [AudioDevice],
         currentInput: AudioDevice?,
         currentOutput: AudioDevice?,
         bufferSize: UInt32,
         latencyMs: Double,
         feedbackGuard: Bool,
+        onSelectCaptureSource: @escaping (AudioCaptureSource) -> Void = { _ in },
         onSelectInput: @escaping (AudioDevice) -> Void,
         onSelectOutput: @escaping (AudioDevice) -> Void,
         onSelectBufferSize: @escaping (UInt32) -> Void,
         onToggleFeedbackGuard: @escaping () -> Void
     ) {
+        self.captureSource = captureSource
         self.devices = devices
         self.currentInput = currentInput
         self.currentOutput = currentOutput
         self.bufferSize = bufferSize
         self.latencyMs = latencyMs
         self.feedbackGuard = feedbackGuard
+        self.onSelectCaptureSource = onSelectCaptureSource
         self.onSelectInput = onSelectInput
         self.onSelectOutput = onSelectOutput
         self.onSelectBufferSize = onSelectBufferSize
@@ -40,15 +47,14 @@ public struct DeviceSelectorView: View {
 
     public var body: some View {
         HStack(spacing: 8) {
-            // Input Device Selector
+            // Source Selector: System Audio (All Apps) vs Hardware Mic
             Menu {
-                Section(header: Text("HARDWARE INPUT")) {
-                    ForEach(devices.filter { $0.isInput }) { dev in
-                        Button(action: { onSelectInput(dev) }) {
+                Section(header: Text("ROUTING SOURCE")) {
+                    ForEach(AudioCaptureSource.allCases, id: \.self) { src in
+                        Button(action: { onSelectCaptureSource(src) }) {
                             HStack {
-                                Image(systemName: dev.transportType.sfSymbol)
-                                Text(dev.name)
-                                if dev.id == currentInput?.id {
+                                Text(src.rawValue)
+                                if src == captureSource {
                                     Image(systemName: "checkmark")
                                 }
                             }
@@ -57,19 +63,18 @@ public struct DeviceSelectorView: View {
                 }
             } label: {
                 HStack(spacing: 5) {
-                    Image(systemName: "mic.fill")
-                        .foregroundColor(DynaQTheme.blue)
+                    Image(systemName: captureSource == .systemAudio ? "waveform.and.person.filled" : "mic.fill")
+                        .foregroundColor(captureSource == .systemAudio ? DynaQTheme.green : DynaQTheme.blue)
                         .font(.system(size: 10))
 
                     VStack(alignment: .leading, spacing: 1) {
-                        Text("IN")
+                        Text("SOURCE")
                             .font(.system(size: 7, weight: .black, design: .monospaced))
                             .foregroundColor(DynaQTheme.textMuted)
-                        Text(currentInput?.name ?? "No Input")
+                        Text(captureSource == .systemAudio ? "System (All Apps)" : "Hardware Mic")
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundColor(DynaQTheme.textPrimary)
                             .lineLimit(1)
-                            .frame(maxWidth: 110, alignment: .leading)
                     }
                     Image(systemName: "chevron.up.chevron.down")
                         .font(.system(size: 8))
@@ -81,6 +86,50 @@ public struct DeviceSelectorView: View {
                 .cornerRadius(5)
             }
             .menuStyle(.borderlessButton)
+
+            // If hardware input mode, show input device selector
+            if captureSource == .hardwareInput {
+                Menu {
+                    Section(header: Text("HARDWARE INPUT")) {
+                        ForEach(devices.filter { $0.isInput }) { dev in
+                            Button(action: { onSelectInput(dev) }) {
+                                HStack {
+                                    Image(systemName: dev.transportType.sfSymbol)
+                                    Text(dev.name)
+                                    if dev.id == currentInput?.id {
+                                        Image(systemName: "checkmark")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "mic.fill")
+                            .foregroundColor(DynaQTheme.blue)
+                            .font(.system(size: 10))
+
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("IN")
+                                .font(.system(size: 7, weight: .black, design: .monospaced))
+                                .foregroundColor(DynaQTheme.textMuted)
+                            Text(currentInput?.name ?? "No Input")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundColor(DynaQTheme.textPrimary)
+                                .lineLimit(1)
+                                .frame(maxWidth: 110, alignment: .leading)
+                        }
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 8))
+                            .foregroundColor(DynaQTheme.textSecondary)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(DynaQTheme.surfaceElevated)
+                    .cornerRadius(5)
+                }
+                .menuStyle(.borderlessButton)
+            }
 
             // Output Device Selector
             Menu {
@@ -111,7 +160,7 @@ public struct DeviceSelectorView: View {
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundColor(DynaQTheme.textPrimary)
                             .lineLimit(1)
-                            .frame(maxWidth: 110, alignment: .leading)
+                            .frame(maxWidth: 120, alignment: .leading)
                     }
                     Image(systemName: "chevron.up.chevron.down")
                         .font(.system(size: 8))
@@ -179,22 +228,23 @@ public struct DeviceSelectorView: View {
             .cornerRadius(5)
 
             // Feedback Guard Safety Indicator
-            Button(action: onToggleFeedbackGuard) {
-                HStack(spacing: 4) {
-                    Image(systemName: feedbackGuard ? "shield.fill" : "shield.slash")
-                        .font(.system(size: 9))
-                        .foregroundColor(feedbackGuard ? DynaQTheme.green : DynaQTheme.red)
-                    Text("GUARD")
-                        .font(.system(size: 8, weight: .bold, design: .monospaced))
-                        .foregroundColor(feedbackGuard ? DynaQTheme.textSecondary : DynaQTheme.red)
+            if captureSource == .hardwareInput {
+                Button(action: onToggleFeedbackGuard) {
+                    HStack(spacing: 4) {
+                        Image(systemName: feedbackGuard ? "shield.fill" : "shield.slash")
+                            .font(.system(size: 9))
+                            .foregroundColor(feedbackGuard ? DynaQTheme.green : DynaQTheme.red)
+                        Text("GUARD")
+                            .font(.system(size: 8, weight: .bold, design: .monospaced))
+                            .foregroundColor(feedbackGuard ? DynaQTheme.textSecondary : DynaQTheme.red)
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 6)
+                    .background(feedbackGuard ? DynaQTheme.surfaceElevated.opacity(0.5) : DynaQTheme.red.opacity(0.2))
+                    .cornerRadius(5)
                 }
-                .padding(.horizontal, 6)
-                .padding(.vertical, 6)
-                .background(feedbackGuard ? DynaQTheme.surfaceElevated.opacity(0.5) : DynaQTheme.red.opacity(0.2))
-                .cornerRadius(5)
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
-            .help(feedbackGuard ? "Feedback Guard Active: Prevents acoustic howl when using built-in mic and speakers." : "Feedback Guard Disabled.")
         }
     }
 }

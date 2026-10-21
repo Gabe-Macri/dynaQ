@@ -4,7 +4,7 @@ import PackageDescription
 let package = Package(
     name: "dynaQ",
     platforms: [
-        .macOS(.v13)
+        .macOS(.v14)
     ],
     products: [
         .executable(name: "dynaQ", targets: ["DynaQApp"]),
@@ -45,4 +45,3 @@ let package = Package(
         ),
     ]
 )
-

@@ -54,14 +54,16 @@ public struct MainWindowView: View {
 
                 Spacer()
 
-                // Complete Hardware I/O Selector (Input, Output, Buffer, Latency)
+                // Complete Hardware I/O Selector (Capture Source, Input, Output, Buffer, Latency)
                 DeviceSelectorView(
+                    captureSource: state.captureSource,
                     devices: state.devices,
                     currentInput: state.selectedInputDevice,
                     currentOutput: state.selectedOutputDevice,
                     bufferSize: state.selectedBufferSize,
                     latencyMs: state.roundtripLatencyMs,
                     feedbackGuard: state.feedbackProtection,
+                    onSelectCaptureSource: { state.setCaptureSource($0) },
                     onSelectInput: { state.setInputDevice($0) },
                     onSelectOutput: { state.setOutputDevice($0) },
                     onSelectBufferSize: { state.setBufferSize($0) },

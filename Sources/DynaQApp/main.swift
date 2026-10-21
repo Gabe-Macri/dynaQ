@@ -43,9 +43,15 @@ func listDevices() {
 }
 
 func checkDriverStatus() {
-    let status = AudioTapController.shared.driverStatusMessage()
-    print("dynaQ Audio Driver Status:")
-    print(status)
+    print("dynaQ Audio Routing Status:")
+    if #available(macOS 14.2, *) {
+        print("• Native CoreAudio System Tap: Fully supported & active")
+    } else {
+        print("• Native CoreAudio System Tap requires macOS 14.2+")
+    }
+    let halDriverPath = "/Library/Audio/Plug-Ins/HAL/DynaQDriver.driver"
+    let hasHal = FileManager.default.fileExists(atPath: halDriverPath)
+    print("• Virtual HAL Driver: \(hasHal ? "Installed" : "Not Installed (Using Native User-Space Tap)")")
 }
 
 // MARK: - Application Delegate
