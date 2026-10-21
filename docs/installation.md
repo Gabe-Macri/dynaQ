@@ -95,11 +95,34 @@ docker compose run --rm dynaq-cli --bench
 
 ---
 
-## Installation via Disk Image (DMG)
+## All-In-One Complete Installer (Recommended)
 
-Pre-built production images are located in the `output/` release folder:
+For users who want all dependencies, virtual audio drivers, background services, and CLI tools installed automatically in a single click:
 
-1. Double-click `dynaQ-1.0.0-beta.1.dmg` to mount the disk image.
+### Included Components
+- **Application Bundle**: `/Applications/dynaQ.app` (includes embedded offline documentation and helpers)
+- **CLI Commands**: `/usr/local/bin/dynaq` and `/usr/local/bin/dynaq-router` (accessible globally from any terminal)
+- **CoreAudio Virtual Driver**: `/Library/Audio/Plug-Ins/HAL/DynaQDriver.driver` (universal arm64/x86_64)
+- **Background Daemon Service**: `/Library/LaunchAgents/com.dynaq.router.plist`
+- **Automatic Configuration**: Restarts `coreaudiod` post-install; zero terminal commands required.
+
+### Installation Steps
+1. Double-click `output/dynaQ-1.0.0-beta.1-all-in-one.dmg` (or standalone `output/dynaQ-1.0.0-beta.1-complete.pkg`).
+2. Run **Install dynaQ Complete.pkg**.
+3. Follow the standard macOS installer prompt and authenticate.
+4. Launch `dynaQ` from `/Applications` or run `dynaq` from your terminal.
+
+### Uninstallation
+The All-In-One DMG includes an automated removal wizard:
+- Double-click **Uninstall dynaQ.command** to cleanly remove all application binaries, drivers, and background services.
+
+---
+
+## Minimal Drag-and-Drop Disk Image (DMG)
+
+For users who only require the standalone `.app` bundle without system-wide driver registration:
+
+1. Double-click `output/dynaQ-1.0.0-beta.1.dmg`.
 2. Drag `dynaQ.app` into `/Applications`.
 3. Open `dynaQ.app` from `/Applications` or launch via Spotlight.
 

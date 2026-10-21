@@ -8,10 +8,7 @@ DerivedData/
 .swiftpm/
 *.swp
 *~
-/dist/*.app
-/dist/*.dmg
-/dist/*.iconset
-/dist/dmg_staging
+/dist/
 /output/
 
 

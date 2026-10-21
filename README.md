@@ -168,10 +168,19 @@ docker run --rm dynaq --bench
 docker run -d -p 8080:8080 dynaq docs
 ```
 
-### Option C: Install from Disk Image (`.dmg`)
+### Option C: All-In-One Complete Installer (`.pkg` / `.dmg`) [Recommended]
+For users who want the desktop app, virtual CoreAudio driver, and CLI commands installed automatically without manual configuration:
+- Double-click `output/dynaQ-1.0.0-beta.1-all-in-one.dmg` and run **Install dynaQ Complete.pkg**.
+- This automatically installs:
+  - `dynaQ.app` into `/Applications`
+  - `dynaq` and `dynaq-router` into `/usr/local/bin`
+  - CoreAudio Virtual HAL Driver into `/Library/Audio/Plug-Ins/HAL`
+  - Restarts CoreAudio automatically (no system reboot required).
+
+### Option D: Minimal Drag-and-Drop Disk Image (`.dmg`)
 Double-click `output/dynaQ-1.0.0-beta.1.dmg` and drag `dynaQ.app` into `/Applications`.
 
-### Option D: Build Production Release Package from Source
+### Option E: Build Production Release Package from Source
 Run the release packaging pipeline:
 ```bash
 ./scripts/build_release.sh

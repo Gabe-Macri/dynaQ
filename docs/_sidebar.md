@@ -32,8 +32,9 @@
   - [CLI Reference](cli-and-router.md#command-line-reference)
 
 - Deployment & Builds
+  - [All-In-One Complete Installer](installation.md#all-in-one-complete-installer-recommended)
   - [Homebrew Installation](installation.md#homebrew-installation-macos)
   - [Docker Container](installation.md#docker-container-environment)
-  - [Disk Image Installation](installation.md#installation-via-disk-image-dmg)
+  - [Minimal Drag-and-Drop DMG](installation.md#minimal-drag-and-drop-disk-image-dmg)
   - [Building from Source](installation.md#building-from-source)
   - [Release Packaging Pipeline](installation.md#release-packaging-pipeline)
