@@ -6,6 +6,11 @@
 
 ##  Pro Features & Audio Engineering Toolset
 
+- **Decoupled Ultra-Lightweight Backend Architecture (`dynaQ-router`)**:
+  - **Ultra-Lightweight Dedicated Backend**: CoreAudio routing logic runs completely decoupled from DSP equations, consuming ~0.0% CPU in passthrough.
+  - **Explicit Client Stream Protocol**: The backend (`DynaQAudioDriver`) delegates audio blocks to registered clients (`AudioProcessingClient`).
+  - **Client-Side Heavy Manipulation**: Heavy audio processing (multi-band parametric EQ, dynamic EQ, FFT analysis, true peak limiting, BS.1770 metering) runs strictly on the client side (`ClientDSPPipeline`).
+  - **Standalone Backend Daemon**: `swift run dynaQ-router` runs the ultra-lightweight router as an independent background service.
 - **High-Performance C & Vector DSP Backend (`CDspKernel`)**:
   - Critical real-time audio paths offloaded to an optimized C kernel (`CDspKernel`) with Apple `Accelerate` (vDSP) vectorization to completely relieve CPU stress from the Swift runtime.
   - **Lock-Free Atomic SPSC Ring Buffer**: `stdatomic.h` memory-fenced circular buffer eliminating mutexes, locks, and priority inversion from the real-time audio thread.

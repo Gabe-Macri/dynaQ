@@ -19,6 +19,26 @@
             "target": "dynaQ",
             "configuration": "release",
             "preLaunchTask": "swift: Build Release dynaQ"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:dynaQ}",
+            "name": "Debug dynaQ-router",
+            "target": "dynaQ-router",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug dynaQ-router"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:dynaQ}",
+            "name": "Release dynaQ-router",
+            "target": "dynaQ-router",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release dynaQ-router"
         }
     ]
 }

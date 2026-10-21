@@ -67,6 +67,9 @@ public final class AppState: ObservableObject {
     private let coreAudioManager = CoreAudioManager.shared
     private let presetStore = PresetStore.shared
 
+    // Client-side DSP pipeline for heavy audio manipulations (EQ, dynamics, limiting, FFT)
+    public let dspPipeline: ClientDSPPipeline
+
     public init() {
         let loadedPresets = presetStore.loadAllProfiles()
         self.presets = loadedPresets
@@ -75,6 +78,11 @@ public final class AppState: ObservableObject {
         self.profileA = initial
         self.profileB = initial.duplicate(newName: "\(initial.name) (B)")
         self.selectedBandID = initial.bands.first?.id
+
+        let coreAudio = CoreAudioManager.shared
+        let defOutRate = Float(coreAudio.fetchAllDevices().first(where: { $0.id == coreAudio.getDefaultOutputDeviceID() })?.currentSampleRate ?? 48000.0)
+        self.dspPipeline = ClientDSPPipeline(initialProfile: initial, sampleRate: defOutRate)
+        self.engineManager.client = dspPipeline
 
         self.appRoutes = [
             AppAudioRoute(bundleIdentifier: "com.apple.Music", appName: "Apple Music", volume: 1.0),
@@ -90,11 +98,11 @@ public final class AppState: ObservableObject {
     }
 
     private func setupAudioEngineBindings() {
-        engineManager.onMeterUpdate = { [weak self] meter in
+        dspPipeline.onMeterUpdate = { [weak self] meter in
             self?.currentMeter = meter
         }
 
-        engineManager.onSpectrumUpdate = { [weak self] spectrum in
+        dspPipeline.onSpectrumUpdate = { [weak self] spectrum in
             self?.spectrumDB = spectrum
         }
 
@@ -160,6 +168,9 @@ public final class AppState: ObservableObject {
     public func startLiveSystemAudio() {
         do {
             refreshAudioApps()
+            dspPipeline.setProfile(currentProfile)
+            dspPipeline.startTelemetryTimer()
+            engineManager.client = dspPipeline
             engineManager.selectedTargetProcessID = selectedAudioApp?.id
             let inID = selectedInputDevice?.id ?? coreAudioManager.getDefaultInputDeviceID()
             let outID = selectedOutputDevice?.id ?? coreAudioManager.getDefaultOutputDeviceID()
@@ -174,6 +185,7 @@ public final class AppState: ObservableObject {
     }
 
     public func stopLiveSystemAudio() {
+        dspPipeline.stopTelemetryTimer()
         engineManager.stop()
         isEngineOnline = false
         statusMessage = "DSP Engine Standby"
@@ -199,6 +211,7 @@ public final class AppState: ObservableObject {
 
     public func setOutputDevice(_ device: AudioDevice) {
         self.selectedOutputDevice = device
+        dspPipeline.eqEngine.setSampleRate(Float(device.currentSampleRate))
         try? engineManager.switchOutputDevice(id: device.id)
     }
 
@@ -241,14 +254,12 @@ public final class AppState: ObservableObject {
     }
 
     public func resetClip() {
-        engineManager.loudnessMeter.resetClip()
+        dspPipeline.resetClip()
         currentMeter.isClippingLeft = false
         currentMeter.isClippingRight = false
     }
 
     private func syncProfileToEngine(_ profile: EQProfile) {
-        engineManager.eqEngine.setProfile(profile)
-        engineManager.limiter.ceilingDB = profile.limiterCeiling
-        engineManager.limiter.isEnabled = profile.isLimiterEnabled
+        dspPipeline.setProfile(profile)
     }
 }

@@ -2,6 +2,7 @@ import XCTest
 import CDspKernel
 @testable import DynaQCore
 @testable import DynaQDSP
+@testable import DynaQAudioDriver
 
 final class CDspKernelTests: XCTestCase {
 
@@ -145,8 +146,33 @@ final class CDspKernelTests: XCTestCase {
         XCTAssertFalse(result.clip_left)
         XCTAssertFalse(result.clip_right)
     }
-}
-<<<<<<< HEAD
 
-=======
->>>>>>> bdfc73f4e823d4c4b98e51cdcf99facd23a7a9dd
+    func testClientDSPPipelineProcessing() {
+        let pipeline = ClientDSPPipeline(initialProfile: DefaultPresets.harmanHeadphoneTarget, sampleRate: 48000.0)
+
+        let count = 256
+        var left = [Float](repeating: 0.5, count: count)
+        var right = [Float](repeating: 0.5, count: count)
+
+        // Process through client pipeline
+        pipeline.processAudioBlock(left: &left, right: &right, count: count, sampleRate: 48000.0)
+
+        // Check output is valid and non-NaN
+        for i in 0..<count {
+            XCTAssertFalse(left[i].isNaN)
+            XCTAssertFalse(right[i].isNaN)
+        }
+    }
+
+    func testAudioRouterWithClientAndPassthrough() {
+        let router = AudioRouterBackend()
+
+        // 1. Without client: passthrough
+        XCTAssertNil(router.client)
+
+        // 2. Attach client
+        let pipeline = ClientDSPPipeline(initialProfile: DefaultPresets.studioFlat, sampleRate: 48000.0)
+        router.client = pipeline
+        XCTAssertNotNil(router.client)
+    }
+}

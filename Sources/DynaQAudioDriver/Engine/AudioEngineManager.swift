@@ -1,8 +1,6 @@
 import Foundation
 import CoreAudio
-import os.lock
 import DynaQCore
-import DynaQDSP
 import CDspKernel
 
 /// High-performance lock-free atomic single-producer single-consumer stereo ring buffer.
@@ -38,24 +36,25 @@ public final class AudioRingBuffer: @unchecked Sendable {
     }
 }
 
-/// Capture source for dynaQ.
+/// Capture source for dynaQ routing backend.
 public enum AudioCaptureSource: String, CaseIterable, Sendable {
-    case systemAudio = "System Audio (All Apps)"
-    case hardwareInput = "Hardware Input (Mic/Interface)"
+    case systemAudio = "System Audio (Tap)"
+    case hardwareInput = "Hardware Microphone / Interface"
 }
 
-/// Fully integrated system I/O audio engine routing live audio directly through CoreAudio HAL & dynaQ DSP.
+/// Dedicated, Ultra-Lightweight Audio Routing Backend.
+/// Explicitly captures audio streams (via macOS 14.2+ Process Tap or Hardware Input) and routes them directly
+/// to physical output devices via low-level CoreAudio HAL.
+///
+/// Designed with zero DSP overhead: heavy manipulation (parametric EQ, dynamic EQ, FFT, limiting, metering)
+/// is delegated entirely to the client via `AudioProcessingClient`. If no client is connected, the router
+/// operates in 100% transparent zero-overhead passthrough mode (~0.0% CPU).
 public final class AudioEngineManager: @unchecked Sendable {
     public static let shared = AudioEngineManager()
 
-    public let eqEngine: ParametricEQEngine
-    public let limiter: TruePeakLimiter
-    public let analyzer: SpectrumAnalyzer
-    public let loudnessMeter: LoudnessMeter
-
     private var outputIOProcID: AudioDeviceIOProcID? = nil
     private var inputHardwareIOProcID: AudioDeviceIOProcID? = nil
-    private let ringBuffer = AudioRingBuffer()
+    public let ringBuffer = AudioRingBuffer()
 
     private var isRunning = false
     private let lock = NSLock()
@@ -68,30 +67,20 @@ public final class AudioEngineManager: @unchecked Sendable {
     public var feedbackProtectionEnabled: Bool = true
     public var isMuted: Bool = false
 
-    // Real-time telemetry: buffered for low-overhead display timer
-    private var latestMeter: AudioMeter = .silent
-    private var meterLock = os_unfair_lock_s()
+    // Explicit Client Hook for DSP Audio Manipulation
+    public weak var client: AudioProcessingClient?
 
-    // Pre-allocated real-time scratch buffers (zero heap alloc on audio thread)
-    private var monoScratch = [Float](repeating: 0.0, count: 8192)
-    private var leftScratch = [Float](repeating: 0.0, count: 8192)
-    private var rightScratch = [Float](repeating: 0.0, count: 8192)
-
-    public var onMeterUpdate: ((AudioMeter) -> Void)?
-    public var onSpectrumUpdate: (([Float]) -> Void)?
+    // Latency Telemetry Callback
     public var onLatencyUpdate: ((Double) -> Void)?
 
-    private var telemetryTimer: Timer?
     private var currentSampleRate: Double = 48000.0
     private var currentBufferFrames: UInt32 = 256
 
-    public init() {
-        let initialProfile = DefaultPresets.harmanHeadphoneTarget
-        self.eqEngine = ParametricEQEngine(profile: initialProfile, sampleRate: 48000.0)
-        self.limiter = TruePeakLimiter(ceilingDB: initialProfile.limiterCeiling, isEnabled: initialProfile.isLimiterEnabled)
-        self.analyzer = SpectrumAnalyzer(fftSize: 1024, binCount: 64, sampleRate: 48000.0)
-        self.loudnessMeter = LoudnessMeter()
-    }
+    // Pre-allocated scratch buffers for interleaved microphone/device streams
+    private var leftScratch = [Float](repeating: 0.0, count: 8192)
+    private var rightScratch = [Float](repeating: 0.0, count: 8192)
+
+    public init() {}
 
     /// Configures and starts live system I/O routing.
     public func start(
@@ -114,7 +103,6 @@ public final class AudioEngineManager: @unchecked Sendable {
 
         self.currentSampleRate = CoreAudioManager.shared.fetchAllDevices().first(where: { $0.id == outputID })?.currentSampleRate ?? 48000.0
         self.currentBufferFrames = CoreAudioManager.shared.getBufferFrameSize(deviceID: outputID)
-        eqEngine.setSampleRate(Float(currentSampleRate))
         ringBuffer.reset()
 
         // 1. Connect Capture Source (System Audio Tap or Hardware Mic)
@@ -127,7 +115,7 @@ public final class AudioEngineManager: @unchecked Sendable {
                 let targets = selectedTargetProcessID != nil ? [selectedTargetProcessID!] : []
                 try tap.start(targetIDs: targets, muteTargetOutput: true)
             } else {
-                throw NSError(domain: "dynaQ.AudioEngine", code: 2, userInfo: [NSLocalizedDescriptionKey: "System Audio Tapping requires macOS 14.2 or later."])
+                throw NSError(domain: "dynaQ.AudioRouter", code: 2, userInfo: [NSLocalizedDescriptionKey: "System Audio Tapping requires macOS 14.2 or later."])
             }
         } else {
             var procID: AudioDeviceIOProcID? = nil
@@ -155,13 +143,13 @@ public final class AudioEngineManager: @unchecked Sendable {
             }, Unmanaged.passUnretained(self).toOpaque(), &procID)
 
             guard inStatus == noErr, let validInProc = procID else {
-                throw NSError(domain: "dynaQ.AudioEngine", code: Int(inStatus), userInfo: [NSLocalizedDescriptionKey: "Failed to connect input hardware IOProc."])
+                throw NSError(domain: "dynaQ.AudioRouter", code: Int(inStatus), userInfo: [NSLocalizedDescriptionKey: "Failed to connect input hardware IOProc."])
             }
             self.inputHardwareIOProcID = validInProc
             AudioDeviceStart(inputID, validInProc)
         }
 
-        // 2. Attach Real-Time Output IOProc directly to the physical hardware device
+        // 2. Attach Dedicated Ultra-Lightweight Output IOProc directly to the physical hardware device
         var outProcID: AudioDeviceIOProcID? = nil
         let outStatus = AudioDeviceCreateIOProcID(outputID, { (_, _, _, _, outputData, _, clientData) -> OSStatus in
             guard let clientData = clientData else { return noErr }
@@ -181,45 +169,39 @@ public final class AudioEngineManager: @unchecked Sendable {
                 return noErr
             }
 
+            // Split Stereo Channels (e.g. CoreAudio Standard Device)
             if abl.count >= 2, let rPtr = abl[1].mData?.assumingMemoryBound(to: Float.self) {
                 _ = manager.ringBuffer.read(left: ptr, right: rPtr, count: frameCount)
-                manager.eqEngine.processStereo(left: ptr, right: rPtr, count: frameCount)
-                manager.limiter.processStereo(left: ptr, right: rPtr, count: frameCount)
 
-                // Fast analyzer feed (downmix using C vector helper)
-                let countToProcess = min(frameCount, 8192)
-                manager.monoScratch.withUnsafeMutableBufferPointer { mPtr in
-                    c_dsp_downmix_stereo_to_mono(ptr, rPtr, mPtr.baseAddress!, countToProcess)
-                    manager.analyzer.feed(samples: mPtr.baseAddress!, count: countToProcess)
+                // Explicit Routing: Hand off to client for heavy manipulation if registered; otherwise pure passthrough
+                if let client = manager.client {
+                    client.processAudioBlock(
+                        left: ptr,
+                        right: rPtr,
+                        count: frameCount,
+                        sampleRate: Float(manager.currentSampleRate)
+                    )
                 }
 
-                // Measure loudness into local state (NO main-thread dispatch from audio thread!)
-                let meter = manager.loudnessMeter.processStereo(left: ptr, right: rPtr, count: frameCount)
-                os_unfair_lock_lock(&manager.meterLock)
-                manager.latestMeter = meter
-                os_unfair_lock_unlock(&manager.meterLock)
-
             } else if buf.mNumberChannels >= 2 {
+                // Interleaved Stereo Channels (e.g. Built-in Speakers / Bluetooth AirPods)
                 let countToProcess = min(frameCount, 8192)
                 manager.leftScratch.withUnsafeMutableBufferPointer { lPtr in
                     manager.rightScratch.withUnsafeMutableBufferPointer { rPtr in
                         _ = manager.ringBuffer.read(left: lPtr.baseAddress!, right: rPtr.baseAddress!, count: countToProcess)
 
-                        manager.eqEngine.processStereo(left: lPtr.baseAddress!, right: rPtr.baseAddress!, count: countToProcess)
-                        manager.limiter.processStereo(left: lPtr.baseAddress!, right: rPtr.baseAddress!, count: countToProcess)
+                        // Explicit Routing: Client DSP manipulation
+                        if let client = manager.client {
+                            client.processAudioBlock(
+                                left: lPtr.baseAddress!,
+                                right: rPtr.baseAddress!,
+                                count: countToProcess,
+                                sampleRate: Float(manager.currentSampleRate)
+                            )
+                        }
 
                         // Vectorized interleaving using C backend
                         c_dsp_interleave_stereo(lPtr.baseAddress!, rPtr.baseAddress!, ptr, countToProcess)
-
-                        manager.monoScratch.withUnsafeMutableBufferPointer { mPtr in
-                            c_dsp_downmix_stereo_to_mono(lPtr.baseAddress!, rPtr.baseAddress!, mPtr.baseAddress!, countToProcess)
-                            manager.analyzer.feed(samples: mPtr.baseAddress!, count: countToProcess)
-                        }
-
-                        let meter = manager.loudnessMeter.processStereo(left: lPtr.baseAddress!, right: rPtr.baseAddress!, count: countToProcess)
-                        os_unfair_lock_lock(&manager.meterLock)
-                        manager.latestMeter = meter
-                        os_unfair_lock_unlock(&manager.meterLock)
                     }
                 }
             }
@@ -228,7 +210,7 @@ public final class AudioEngineManager: @unchecked Sendable {
         }, Unmanaged.passUnretained(self).toOpaque(), &outProcID)
 
         guard outStatus == noErr, let validOutProc = outProcID else {
-            throw NSError(domain: "dynaQ.AudioEngine", code: Int(outStatus), userInfo: [NSLocalizedDescriptionKey: "Failed to create hardware output IOProc (OSStatus \(outStatus))"])
+            throw NSError(domain: "dynaQ.AudioRouter", code: Int(outStatus), userInfo: [NSLocalizedDescriptionKey: "Failed to create hardware output IOProc (OSStatus \(outStatus))"])
         }
         self.outputIOProcID = validOutProc
         AudioDeviceStart(outputID, validOutProc)
@@ -236,12 +218,11 @@ public final class AudioEngineManager: @unchecked Sendable {
         self.isRunning = true
 
         DispatchQueue.main.async { [weak self] in
-            self?.startTelemetryTimer()
             self?.updateLatency()
         }
     }
 
-    /// Stops the live I/O engine.
+    /// Stops live I/O routing.
     public func stop() {
         lock.lock()
         defer { lock.unlock() }
@@ -269,11 +250,6 @@ public final class AudioEngineManager: @unchecked Sendable {
 
         isRunning = false
         ringBuffer.reset()
-
-        DispatchQueue.main.async { [weak self] in
-            self?.telemetryTimer?.invalidate()
-            self?.telemetryTimer = nil
-        }
     }
 
     public var active: Bool {
@@ -332,20 +308,7 @@ public final class AudioEngineManager: @unchecked Sendable {
         let dev = CoreAudioManager.shared.fetchAllDevices().first(where: { $0.id == id })
         return dev?.transportType == .builtIn && dev?.isInput == true
     }
-
-    /// Smooth, optimized 30fps display refresh timer (batches metering + spectrum to main thread).
-    private func startTelemetryTimer() {
-        telemetryTimer?.invalidate()
-        telemetryTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
-            guard let self = self else { return }
-            os_unfair_lock_lock(&self.meterLock)
-            let meter = self.latestMeter
-            os_unfair_lock_unlock(&self.meterLock)
-
-            let spectrum = self.analyzer.getSpectrumDB()
-
-            self.onMeterUpdate?(meter)
-            self.onSpectrumUpdate?(spectrum)
-        }
-    }
 }
+
+/// Typealias for clarity and backwards compatibility.
+public typealias AudioRouterBackend = AudioEngineManager

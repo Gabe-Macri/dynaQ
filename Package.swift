@@ -8,6 +8,7 @@ let package = Package(
     ],
     products: [
         .executable(name: "dynaQ", targets: ["DynaQApp"]),
+        .executable(name: "dynaQ-router", targets: ["DynaQRouter"]),
         .library(name: "CDspKernel", targets: ["CDspKernel"]),
         .library(name: "DynaQCore", targets: ["DynaQCore"]),
         .library(name: "DynaQDSP", targets: ["DynaQDSP"]),
@@ -26,12 +27,12 @@ let package = Package(
             dependencies: []
         ),
         .target(
-            name: "DynaQDSP",
+            name: "DynaQAudioDriver",
             dependencies: ["DynaQCore", "CDspKernel"]
         ),
         .target(
-            name: "DynaQAudioDriver",
-            dependencies: ["DynaQCore", "DynaQDSP", "CDspKernel"]
+            name: "DynaQDSP",
+            dependencies: ["DynaQCore", "CDspKernel", "DynaQAudioDriver"]
         ),
         .target(
             name: "DynaQUI",
@@ -41,9 +42,13 @@ let package = Package(
             name: "DynaQApp",
             dependencies: ["DynaQCore", "DynaQDSP", "DynaQAudioDriver", "DynaQUI", "CDspKernel"]
         ),
+        .executableTarget(
+            name: "DynaQRouter",
+            dependencies: ["DynaQCore", "DynaQAudioDriver", "CDspKernel"]
+        ),
         .testTarget(
             name: "DynaQDSPTests",
-            dependencies: ["DynaQDSP", "DynaQCore", "CDspKernel"]
+            dependencies: ["DynaQDSP", "DynaQCore", "CDspKernel", "DynaQAudioDriver"]
         ),
         .testTarget(
             name: "DynaQCoreTests",
