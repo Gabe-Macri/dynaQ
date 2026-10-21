@@ -1,8 +1,10 @@
 import Foundation
 import Accelerate
 import DynaQCore
+import CDspKernel
 
 /// Core DSP Engine executing multi-band parametric, dynamic, and Mid/Side equalization.
+/// Offloaded to high-performance C vector kernel (CDspKernel) for zero-overhead audio processing.
 public final class ParametricEQEngine: @unchecked Sendable {
     private let lock = NSLock()
     private var sampleRate: Float = 48000.0
@@ -11,9 +13,8 @@ public final class ParametricEQEngine: @unchecked Sendable {
     private var bandFilters: [BiquadFilter] = []
     private var dynamicProcessors: [DynamicEQProcessor] = []
 
-    // Scratch buffers for M/S and channel routing
-    private var midScratch: [Float] = []
-    private var sideScratch: [Float] = []
+    // Native C DSP engine state
+    private var cEngine = c_eq_engine_t()
 
     // Precomputed curve cache for zero-lag UI rendering
     private var cachedCurve: [Float] = []
@@ -27,6 +28,7 @@ public final class ParametricEQEngine: @unchecked Sendable {
     public init(profile: EQProfile = DefaultPresets.harmanHeadphoneTarget, sampleRate: Float = 48000.0) {
         self.profile = profile
         self.sampleRate = max(sampleRate, 8000.0)
+        c_eq_engine_init(&cEngine)
 
         // Precompute fixed logarithmically spaced frequencies
         let logMin = log10(Float(20.0))
@@ -85,6 +87,7 @@ public final class ParametricEQEngine: @unchecked Sendable {
         profile.masterGain = masterDB
         preampLinear = pow(10.0, preampDB / 20.0)
         masterLinear = pow(10.0, masterDB / 20.0)
+        c_eq_engine_set_gains(&cEngine, preampLinear, masterLinear)
         updateCurveCache()
     }
 
@@ -93,6 +96,7 @@ public final class ParametricEQEngine: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         profile.isBypassed = bypassed
+        syncEngineParams()
     }
 
     /// Returns the precalculated 128-point frequency response curve for instant zero-lag UI rendering.
@@ -111,10 +115,27 @@ public final class ParametricEQEngine: @unchecked Sendable {
         bandFilters = profile.bands.map { _ in BiquadFilter() }
         dynamicProcessors = profile.bands.map { _ in DynamicEQProcessor() }
 
+        c_eq_engine_set_gains(&cEngine, preampLinear, masterLinear)
+        syncEngineParams()
+
+        cEngine.band_count = Int32(min(profile.bands.count, Int(C_DSP_MAX_BANDS)))
+
         for i in 0..<profile.bands.count {
             updateBandCoefficients(index: i, immediate: true)
         }
         updateCurveCache()
+    }
+
+    private func syncEngineParams() {
+        let modeInt: Int32
+        switch profile.monitorMode {
+        case .stereo: modeInt = 0
+        case .mono: modeInt = 1
+        case .sides: modeInt = 2
+        case .leftOnly: modeInt = 3
+        case .rightOnly: modeInt = 4
+        }
+        c_eq_engine_set_params(&cEngine, profile.isBypassed, profile.phaseInvert, modeInt)
     }
 
     private func recalculateAllCoefficients(immediate: Bool) {
@@ -124,15 +145,11 @@ public final class ParametricEQEngine: @unchecked Sendable {
     }
 
     private func updateBandCoefficients(index: Int, immediate: Bool) {
-        guard index < profile.bands.count, index < bandFilters.count else { return }
+        guard index < profile.bands.count, index < Int(C_DSP_MAX_BANDS) else { return }
         let band = profile.bands[index]
 
-        let filter = bandFilters[index]
-        filter.isBypassed = !band.isEnabled
-
-        if !band.isEnabled {
-            filter.setCoefficients(.bypass, immediate: immediate)
-            return
+        if index < bandFilters.count {
+            bandFilters[index].isBypassed = !band.isEnabled
         }
 
         let coeffs = BiquadCoefficients.calculate(
@@ -142,7 +159,29 @@ public final class ParametricEQEngine: @unchecked Sendable {
             q: band.q,
             sampleRate: sampleRate
         )
-        filter.setCoefficients(coeffs, immediate: immediate)
+
+        if index < bandFilters.count {
+            bandFilters[index].setCoefficients(coeffs, immediate: immediate)
+        }
+
+        let cCoeffs = c_biquad_coeffs_t(
+            b0: coeffs.b0,
+            b1: coeffs.b1,
+            b2: coeffs.b2,
+            a1: coeffs.a1,
+            a2: coeffs.a2
+        )
+
+        let routeInt: Int32
+        switch band.routing {
+        case .stereo: routeInt = 0
+        case .mid: routeInt = 1
+        case .side: routeInt = 2
+        case .left: routeInt = 3
+        case .right: routeInt = 4
+        }
+
+        c_eq_engine_set_band(&cEngine, Int32(index), cCoeffs, routeInt, band.isEnabled, immediate)
     }
 
     private func updateCurveCache() {
@@ -165,7 +204,7 @@ public final class ParametricEQEngine: @unchecked Sendable {
         self.cachedCurve = totalDB
     }
 
-    // MARK: - Real-time Audio Processing
+    // MARK: - Real-time Audio Processing (Offloaded to C Backend)
 
     public func processStereo(
         left: UnsafeMutablePointer<Float>,
@@ -174,38 +213,13 @@ public final class ParametricEQEngine: @unchecked Sendable {
     ) {
         guard !profile.isBypassed else { return }
 
-        lock.lock()
-        let localBands = profile.bands
-        let pLinear = preampLinear
-        let mLinear = masterLinear
-        let pInvert = profile.phaseInvert
-        let mMode = profile.monitorMode
-        lock.unlock()
-
-        if midScratch.count < count {
-            midScratch = [Float](repeating: 0.0, count: count)
-            sideScratch = [Float](repeating: 0.0, count: count)
-        }
-
-        // 1. Preamp Gain
-        if abs(pLinear - 1.0) > 0.001 {
-            var factor = pLinear
-            vDSP_vsmul(left, 1, &factor, left, 1, vDSP_Length(count))
-            vDSP_vsmul(right, 1, &factor, right, 1, vDSP_Length(count))
-        }
-
-        // 2. Multi-band filtering
-        for i in 0..<bandFilters.count {
-            let filter = bandFilters[i]
-            guard !filter.isBypassed else { continue }
-
-            let band = localBands[i]
-
-            // Dynamic EQ Modulation
-            if band.isDynamic {
+        // Dynamic EQ modulation if any active
+        for i in 0..<profile.bands.count {
+            let band = profile.bands[i]
+            if band.isDynamic && band.isEnabled && i < dynamicProcessors.count {
                 let dyn = dynamicProcessors[i]
                 let offsetDB = dyn.processBlock(samples: left, count: count, sampleRate: sampleRate, band: band)
-                if abs(offsetDB) > 0.01 {
+                if abs(offsetDB) > 0.02 {
                     let dynCoeffs = BiquadCoefficients.calculate(
                         type: band.filterType,
                         frequency: band.frequency,
@@ -213,92 +227,28 @@ public final class ParametricEQEngine: @unchecked Sendable {
                         q: band.q,
                         sampleRate: sampleRate
                     )
-                    filter.setCoefficients(dynCoeffs, immediate: false)
-                }
-            }
-
-            switch band.routing {
-            case .stereo:
-                filter.process(buffer: left, count: count, channel: 0)
-                filter.process(buffer: right, count: count, channel: 1)
-
-            case .left:
-                filter.process(buffer: left, count: count, channel: 0)
-
-            case .right:
-                filter.process(buffer: right, count: count, channel: 1)
-
-            case .mid:
-                midScratch.withUnsafeMutableBufferPointer { mPtr in
-                    sideScratch.withUnsafeMutableBufferPointer { sPtr in
-                        for n in 0..<count {
-                            mPtr[n] = (left[n] + right[n]) * 0.5
-                            sPtr[n] = (left[n] - right[n]) * 0.5
-                        }
-                        filter.process(buffer: mPtr.baseAddress!, count: count, channel: 0)
-                        for n in 0..<count {
-                            left[n] = mPtr[n] + sPtr[n]
-                            right[n] = mPtr[n] - sPtr[n]
-                        }
+                    let cCoeffs = c_biquad_coeffs_t(
+                        b0: dynCoeffs.b0,
+                        b1: dynCoeffs.b1,
+                        b2: dynCoeffs.b2,
+                        a1: dynCoeffs.a1,
+                        a2: dynCoeffs.a2
+                    )
+                    let routeInt: Int32
+                    switch band.routing {
+                    case .stereo: routeInt = 0
+                    case .mid: routeInt = 1
+                    case .side: routeInt = 2
+                    case .left: routeInt = 3
+                    case .right: routeInt = 4
                     }
-                }
-
-            case .side:
-                midScratch.withUnsafeMutableBufferPointer { mPtr in
-                    sideScratch.withUnsafeMutableBufferPointer { sPtr in
-                        for n in 0..<count {
-                            mPtr[n] = (left[n] + right[n]) * 0.5
-                            sPtr[n] = (left[n] - right[n]) * 0.5
-                        }
-                        filter.process(buffer: sPtr.baseAddress!, count: count, channel: 1)
-                        for n in 0..<count {
-                            left[n] = mPtr[n] + sPtr[n]
-                            right[n] = mPtr[n] - sPtr[n]
-                        }
-                    }
+                    c_eq_engine_set_band(&cEngine, Int32(i), cCoeffs, routeInt, true, false)
                 }
             }
         }
 
-        // 3. Monitor Mode Auditioning
-        switch mMode {
-        case .stereo:
-            break
-        case .mono:
-            for n in 0..<count {
-                let mono = (left[n] + right[n]) * 0.5
-                left[n] = mono
-                right[n] = mono
-            }
-        case .sides:
-            for n in 0..<count {
-                let side = (left[n] - right[n]) * 0.5
-                left[n] = side
-                right[n] = -side
-            }
-        case .leftOnly:
-            for n in 0..<count {
-                right[n] = 0.0
-            }
-        case .rightOnly:
-            for n in 0..<count {
-                left[n] = 0.0
-            }
-        }
-
-        // 4. Polarity / Phase Invert (180°)
-        if pInvert {
-            var negOne: Float = -1.0
-            vDSP_vsmul(left, 1, &negOne, left, 1, vDSP_Length(count))
-            vDSP_vsmul(right, 1, &negOne, right, 1, vDSP_Length(count))
-        }
-
-        // 5. Master Output Gain
-        if abs(mLinear - 1.0) > 0.001 {
-            var factor = mLinear
-            vDSP_vsmul(left, 1, &factor, left, 1, vDSP_Length(count))
-            vDSP_vsmul(right, 1, &factor, right, 1, vDSP_Length(count))
-        }
+        // Single vectorized C call for all active filter bands, Mid/Side matrixing, phase, and gains
+        c_eq_engine_process_stereo(&cEngine, left, right, count)
     }
 
     // MARK: - Frequency Curve Evaluation (For UI Visualization)

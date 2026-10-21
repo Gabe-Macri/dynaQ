@@ -1,6 +1,8 @@
 import Foundation
+import CDspKernel
 
-/// Fast soft-knee true peak limiter to prevent digital overs and speaker damage.
+/// Fast vectorized soft-knee true peak limiter to prevent digital overs and speaker damage.
+/// Accelerated via C SIMD kernel (CDspKernel) for zero CPU overhead and transparent soft saturation.
 public final class TruePeakLimiter: @unchecked Sendable {
     public var ceilingDB: Float = -0.2 {
         didSet {
@@ -17,34 +19,14 @@ public final class TruePeakLimiter: @unchecked Sendable {
         self.linearCeiling = pow(10.0, ceilingDB / 20.0)
     }
 
-    /// In-place limiting on stereo buffers.
+    /// In-place limiting on stereo buffers using vectorized C kernel.
+    @inline(__always)
     public func processStereo(
         left: UnsafeMutablePointer<Float>,
         right: UnsafeMutablePointer<Float>,
         count: Int
     ) {
         guard isEnabled else { return }
-        let c = linearCeiling
-        let knee = c * 0.85
-
-        for i in 0..<count {
-            left[i] = limitSample(left[i], ceiling: c, knee: knee)
-            right[i] = limitSample(right[i], ceiling: c, knee: knee)
-        }
-    }
-
-    @inline(__always)
-    private func limitSample(_ x: Float, ceiling: Float, knee: Float) -> Float {
-        let absX = abs(x)
-        if absX <= knee {
-            return x
-        }
-        let sign: Float = x < 0 ? -1.0 : 1.0
-        // Soft compression between knee and ceiling
-        let over = absX - knee
-        let range = ceiling - knee
-        let saturated = knee + range * tanh(over / range)
-        return sign * min(saturated, ceiling)
+        c_dsp_limiter_process_stereo(left, right, count, linearCeiling, isEnabled)
     }
 }
-
