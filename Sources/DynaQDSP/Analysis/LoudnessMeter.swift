@@ -1,8 +1,10 @@
 import Foundation
 import Accelerate
 import DynaQCore
+import CDspKernel
 
-/// Stereo peak, RMS, and clipping detector.
+/// Vector-accelerated stereo peak, RMS, and clipping detector.
+/// Offloaded to Apple Accelerate hardware routines (vDSP_maxmgv, vDSP_measqv) via CDspKernel.
 public final class LoudnessMeter: @unchecked Sendable {
     private var peakL: Float = -80.0
     private var peakR: Float = -80.0
@@ -25,52 +27,29 @@ public final class LoudnessMeter: @unchecked Sendable {
     ) -> AudioMeter {
         guard count > 0 else { return .silent }
 
-        var maxL: Float = 0.0
-        var maxR: Float = 0.0
-        var sumSquaresL: Float = 0.0
-        var sumSquaresR: Float = 0.0
-
-        for i in 0..<count {
-            let absL = abs(left[i])
-            let absR = abs(right[i])
-
-            if absL > maxL { maxL = absL }
-            if absR > maxR { maxR = absR }
-
-            sumSquaresL += absL * absL
-            sumSquaresR += absR * absR
-
-            if absL >= 0.999 { clipL = true }
-            if absR >= 0.999 { clipR = true }
-        }
-
-        let meanSqL = sumSquaresL / Float(count)
-        let meanSqR = sumSquaresR / Float(count)
-
-        let currRmsL = meanSqL > 1e-10 ? 10.0 * log10(meanSqL) : -80.0
-        let currRmsR = meanSqR > 1e-10 ? 10.0 * log10(meanSqR) : -80.0
-
-        let currPeakL = maxL > 1e-5 ? 20.0 * log10(maxL) : -80.0
-        let currPeakR = maxR > 1e-5 ? 20.0 * log10(maxR) : -80.0
-
-        // Smooth peak decay
-        peakL = max(currPeakL, peakL - 0.5)
-        peakR = max(currPeakR, peakR - 0.5)
-
-        // Smooth RMS
-        rmsL += (currRmsL - rmsL) * 0.2
-        rmsR += (currRmsR - rmsR) * 0.2
+        var result = c_loudness_result_t()
+        c_dsp_measure_loudness(
+            left,
+            right,
+            count,
+            &peakL,
+            &peakR,
+            &rmsL,
+            &rmsR,
+            &clipL,
+            &clipR,
+            &result
+        )
 
         return AudioMeter(
-            peakLeft: peakL,
-            peakRight: peakR,
-            rmsLeft: rmsL,
-            rmsRight: rmsR,
-            lufsMomentary: (rmsL + rmsR) * 0.5,
-            lufsIntegrated: (rmsL + rmsR) * 0.5,
-            isClippingLeft: clipL,
-            isClippingRight: clipR
+            peakLeft: result.peak_left_db,
+            peakRight: result.peak_right_db,
+            rmsLeft: result.rms_left_db,
+            rmsRight: result.rms_right_db,
+            lufsMomentary: (result.rms_left_db + result.rms_right_db) * 0.5,
+            lufsIntegrated: (result.rms_left_db + result.rms_right_db) * 0.5,
+            isClippingLeft: result.clip_left,
+            isClippingRight: result.clip_right
         )
     }
 }
-

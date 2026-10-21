@@ -109,13 +109,20 @@ public final class SpectrumAnalyzer: @unchecked Sendable {
         }
 
         let halfSize = fftSize / 2
-        let invSize = 1.0 / Float(fftSize)
+        var invSize = 1.0 / Float(fftSize)
 
-        // Fast vectorized magnitude calculation
-        for i in 0..<halfSize {
-            let r = realParts[i]
-            let im = imagParts[i]
-            magnitudes[i] = sqrt(r * r + im * im) * invSize
+        // Hardware-accelerated SIMD magnitude calculation
+        realParts.withUnsafeBufferPointer { rPtr in
+            imagParts.withUnsafeBufferPointer { iPtr in
+                var split = DSPSplitComplex(
+                    realp: UnsafeMutablePointer(mutating: rPtr.baseAddress!),
+                    imagp: UnsafeMutablePointer(mutating: iPtr.baseAddress!)
+                )
+                magnitudes.withUnsafeMutableBufferPointer { mPtr in
+                    vDSP_zvabs(&split, 1, mPtr.baseAddress!, 1, vDSP_Length(halfSize))
+                    vDSP_vsmul(mPtr.baseAddress!, 1, &invSize, mPtr.baseAddress!, 1, vDSP_Length(halfSize))
+                }
+            }
         }
 
         // Apply precomputed logarithmic bins

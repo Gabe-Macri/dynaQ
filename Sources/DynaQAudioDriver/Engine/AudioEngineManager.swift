@@ -3,71 +3,38 @@ import CoreAudio
 import os.lock
 import DynaQCore
 import DynaQDSP
+import CDspKernel
 
-/// High-performance thread-safe stereo ring buffer with power-of-two mask for zero-allocation streaming.
+/// High-performance lock-free atomic single-producer single-consumer stereo ring buffer.
+/// Completely eliminates thread locks and mutexes from the real-time audio thread using C atomic memory fences.
 public final class AudioRingBuffer: @unchecked Sendable {
-    private var leftBuffer: [Float]
-    private var rightBuffer: [Float]
-    private let capacity: Int = 65536
-    private let mask: Int = 65535
-    private var writeHead: Int = 0
-    private var readHead: Int = 0
-    private var availableFrames: Int = 0
-    private var lock = os_unfair_lock_s()
+    private var cBuffer: OpaquePointer?
 
-    public init() {
-        self.leftBuffer = [Float](repeating: 0.0, count: 65536)
-        self.rightBuffer = [Float](repeating: 0.0, count: 65536)
+    public init(capacity: Int = 65536) {
+        self.cBuffer = c_ringbuffer_create(capacity)
+    }
+
+    deinit {
+        if let buf = cBuffer {
+            c_ringbuffer_destroy(buf)
+        }
     }
 
     @inline(__always)
     public func write(left: UnsafePointer<Float>, right: UnsafePointer<Float>, count: Int) {
-        os_unfair_lock_lock(&lock)
-        let framesToWrite = min(count, capacity - availableFrames)
-        var w = writeHead
-        for i in 0..<framesToWrite {
-            leftBuffer[w] = left[i]
-            rightBuffer[w] = right[i]
-            w = (w + 1) & mask
-        }
-        writeHead = w
-        availableFrames += framesToWrite
-        os_unfair_lock_unlock(&lock)
+        guard let buf = cBuffer else { return }
+        _ = c_ringbuffer_write_stereo(buf, left, right, count)
     }
 
     @inline(__always)
     public func read(left: UnsafeMutablePointer<Float>, right: UnsafeMutablePointer<Float>, count: Int) -> Int {
-        os_unfair_lock_lock(&lock)
-        let framesToRead = min(count, availableFrames)
-        var r = readHead
-        for i in 0..<framesToRead {
-            left[i] = leftBuffer[r]
-            right[i] = rightBuffer[r]
-            r = (r + 1) & mask
-        }
-        readHead = r
-        availableFrames -= framesToRead
-        os_unfair_lock_unlock(&lock)
-
-        if framesToRead < count {
-            for i in framesToRead..<count {
-                left[i] = 0.0
-                right[i] = 0.0
-            }
-        }
-        return framesToRead
+        guard let buf = cBuffer else { return 0 }
+        return Int(c_ringbuffer_read_stereo(buf, left, right, count))
     }
 
     public func reset() {
-        os_unfair_lock_lock(&lock)
-        writeHead = 0
-        readHead = 0
-        availableFrames = 0
-        for i in 0..<capacity {
-            leftBuffer[i] = 0.0
-            rightBuffer[i] = 0.0
-        }
-        os_unfair_lock_unlock(&lock)
+        guard let buf = cBuffer else { return }
+        c_ringbuffer_reset(buf)
     }
 }
 
@@ -174,15 +141,11 @@ public final class AudioEngineManager: @unchecked Sendable {
                 if abl.count >= 2, let rPtr = abl[1].mData?.assumingMemoryBound(to: Float.self) {
                     manager.ringBuffer.write(left: ptr, right: rPtr, count: frameCount)
                 } else if buf.mNumberChannels >= 2 {
-                    var l = [Float](repeating: 0.0, count: frameCount)
-                    var r = [Float](repeating: 0.0, count: frameCount)
-                    for i in 0..<frameCount {
-                        l[i] = ptr[i * 2]
-                        r[i] = ptr[i * 2 + 1]
-                    }
-                    l.withUnsafeBufferPointer { lPtr in
-                        r.withUnsafeBufferPointer { rPtr in
-                            manager.ringBuffer.write(left: lPtr.baseAddress!, right: rPtr.baseAddress!, count: frameCount)
+                    let count = min(frameCount, 8192)
+                    manager.leftScratch.withUnsafeMutableBufferPointer { lPtr in
+                        manager.rightScratch.withUnsafeMutableBufferPointer { rPtr in
+                            c_dsp_deinterleave_stereo(ptr, lPtr.baseAddress!, rPtr.baseAddress!, count)
+                            manager.ringBuffer.write(left: lPtr.baseAddress!, right: rPtr.baseAddress!, count: count)
                         }
                     }
                 } else {
@@ -223,12 +186,10 @@ public final class AudioEngineManager: @unchecked Sendable {
                 manager.eqEngine.processStereo(left: ptr, right: rPtr, count: frameCount)
                 manager.limiter.processStereo(left: ptr, right: rPtr, count: frameCount)
 
-                // Fast analyzer feed (downmix using scratch buffer)
+                // Fast analyzer feed (downmix using C vector helper)
                 let countToProcess = min(frameCount, 8192)
                 manager.monoScratch.withUnsafeMutableBufferPointer { mPtr in
-                    for i in 0..<countToProcess {
-                        mPtr[i] = (ptr[i] + rPtr[i]) * 0.5
-                    }
+                    c_dsp_downmix_stereo_to_mono(ptr, rPtr, mPtr.baseAddress!, countToProcess)
                     manager.analyzer.feed(samples: mPtr.baseAddress!, count: countToProcess)
                 }
 
@@ -247,15 +208,11 @@ public final class AudioEngineManager: @unchecked Sendable {
                         manager.eqEngine.processStereo(left: lPtr.baseAddress!, right: rPtr.baseAddress!, count: countToProcess)
                         manager.limiter.processStereo(left: lPtr.baseAddress!, right: rPtr.baseAddress!, count: countToProcess)
 
-                        for i in 0..<countToProcess {
-                            ptr[i * 2] = lPtr[i]
-                            ptr[i * 2 + 1] = rPtr[i]
-                        }
+                        // Vectorized interleaving using C backend
+                        c_dsp_interleave_stereo(lPtr.baseAddress!, rPtr.baseAddress!, ptr, countToProcess)
 
                         manager.monoScratch.withUnsafeMutableBufferPointer { mPtr in
-                            for i in 0..<countToProcess {
-                                mPtr[i] = (lPtr[i] + rPtr[i]) * 0.5
-                            }
+                            c_dsp_downmix_stereo_to_mono(lPtr.baseAddress!, rPtr.baseAddress!, mPtr.baseAddress!, countToProcess)
                             manager.analyzer.feed(samples: mPtr.baseAddress!, count: countToProcess)
                         }
 

@@ -4,8 +4,14 @@
 
 ---
 
-## 🎛 Pro Features & Audio Engineering Toolset
+##  Pro Features & Audio Engineering Toolset
 
+- **High-Performance C & Vector DSP Backend (`CDspKernel`)**:
+  - Critical real-time audio paths offloaded to an optimized C kernel (`CDspKernel`) with Apple `Accelerate` (vDSP) vectorization to completely relieve CPU stress from the Swift runtime.
+  - **Lock-Free Atomic SPSC Ring Buffer**: `stdatomic.h` memory-fenced circular buffer eliminating mutexes, locks, and priority inversion from the real-time audio thread.
+  - **Vectorized Biquad Cascade**: Cascading Direct Form II Transposed biquads executed in tight, unrolled C loops with smooth coefficient ramping.
+  - **Hardware Vector Telemetry**: Peak and RMS evaluation powered by `vDSP_maxmgv` and `vDSP_measqv` for instantaneous, zero-allocation metering.
+  - **Vectorized Mid/Side Matrix & Limiter**: Real-time M/S encoding/decoding and soft-knee true peak limiting executing via SIMD vector routines.
 - **Real-Time System I/O Integration**:
   - Direct CoreAudio HAL hardware integration with selectable hardware inputs (mics, loopback devices, audio interfaces) and outputs (AirPods, Studio Monitors, USB DACs).
   - Variable hardware buffer frame size selection (**64, 128, 256, 512, 1024 samples**).
@@ -36,7 +42,7 @@
 
 ---
 
-## 🏗 Architecture
+##  Architecture
 
 ```mermaid
 flowchart TD
@@ -88,79 +94,7 @@ flowchart TD
     Limiter --> Headphones
 ```
 
----
-
-## 📁 Codebase Layout
-
-```
-dynaQ/
-├── Package.swift                    # Swift Package Manager manifest (macOS 13.0+)
-├── Sources/
-│   ├── DynaQCore/                   # Core models, filter equations & preset management
-│   │   ├── Models/
-│   │   │   ├── FilterType.swift     # Filter shapes (Bell, Shelves, Cuts, Notch)
-│   │   │   ├── EQBand.swift         # Band model with dynamic EQ & M/S routing
-│   │   │   ├── EQProfile.swift      # Preset schema with phase invert & monitor modes
-│   │   │   ├── AudioDevice.swift    # CoreAudio hardware metadata with latency/buffers
-│   │   │   ├── AppAudioRoute.swift  # Per-application routing configuration
-│   │   │   └── AudioMeter.swift     # Real-time LUFS/RMS/Peak telemetry
-│   │   └── Presets/
-│   │       ├── DefaultPresets.swift # Factory curves (Harman, Flat, Vocal, Mastering)
-│   │       └── PresetStore.swift    # JSON persistence in ~/Library/Application Support
-│   ├── DynaQDSP/                    # High-performance vectorized audio DSP
-│   │   ├── Biquad/
-│   │   │   ├── BiquadCoefficients.swift # RBJ formulas & analytical magnitude response
-│   │   │   └── BiquadFilter.swift       # Direct Form II Transposed stereo filter
-│   │   ├── EQ/
-│   │   │   ├── ParametricEQEngine.swift # Multi-band cascading M/S filter processor
-│   │   │   └── DynamicEQProcessor.swift # Envelope follower & dynamic delta gain
-│   │   ├── Analysis/
-│   │   │   ├── SpectrumAnalyzer.swift   # Accelerate vDSP FFT with Hann windowing
-│   │   │   └── LoudnessMeter.swift      # ITU-R BS.1770 stereo meter & clipping logic
-│   │   └── Dynamics/
-│   │       └── TruePeakLimiter.swift    # Anti-clipping soft-knee peak limiter
-│   ├── DynaQAudioDriver/            # CoreAudio HAL & audio graph management
-│   │   ├── CoreAudio/
-│   │   │   └── CoreAudioManager.swift   # Device enumeration, buffer size & latency
-│   │   └── Engine/
-│   │       ├── AudioEngineManager.swift # Real-time I/O AUHAL engine & AudioRingBuffer
-│   │       └── AudioTapController.swift # HAL driver bridge & macOS process taps
-│   ├── DynaQUI/                     # Dark Studio Pro UI (SwiftUI)
-│   │   ├── Theme/
-│   │   │   └── DynaQTheme.swift         # Dark studio palette, grid lines, accents
-│   │   └── Views/
-│   │       ├── EQCurveView.swift        # Octave markers, tooltips, live FFT spectrum
-│   │       ├── EQBandInspectorView.swift# M/S routing, numeric readouts, dynamic EQ
-│   │       ├── MasterSectionView.swift  # A/B slots, Ø Phase, Limiter, VU meters
-│   │       ├── DeviceSelectorView.swift # Hardware In/Out, buffer size, latency badge
-│   │       ├── PresetPickerView.swift   # Preset library drawer & custom saver
-│   │       ├── AppRoutingView.swift     # Per-application routing panel
-│   │       └── Components/
-│   │           ├── RotaryKnob.swift     # Pro audio rotary knob with drag control
-│   │           └── VUMeterView.swift    # Segmented stereo meter with clip LEDs
-│   └── DynaQApp/                    # Application coordinator & entry point
-│       ├── main.swift               # Dual GUI / CLI entry point & NSApplication delegate
-│       ├── AppState.swift           # Centralized reactive coordinator & A/B manager
-│       └── Views/
-│           ├── MainWindowView.swift # Full studio desktop window
-│           └── MenuBarView.swift    # Compact macOS menu bar status popup
-├── Driver/                          # Virtual Audio HAL Driver
-│   ├── AudioServerPlugin/
-│   │   ├── DynaQDriver.c            # Virtual loopback audio driver source
-│   │   └── Info.plist               # Driver bundle metadata
-│   └── README.md                    # Driver installation & CATapDescription guide
-├── Tests/
-│   ├── DynaQDSPTests/               # DSP tests: Biquad math, phase inversion, FFT
-│   └── DynaQCoreTests/              # Core tests: Serialization, presets, cloning
-└── scripts/
-    ├── build.sh                     # Release build & test runner
-    ├── run.sh                       # Quick launch script
-    └── install_driver.sh            # Virtual driver deployment script
-```
-
----
-
-## 🚀 Getting Started
+## Getting Started
 
 ### 1. Build and Test
 ```bash
