@@ -25,8 +25,21 @@ mkdir -p "$OUTPUT_DIR"
 # 
 # 1. Compile in Release Mode
 # 
-echo "\n[1/8] Compiling production release binaries (SwiftPM)..."
-swift build -c release
+echo "\n[1/8] Compiling production release binaries (SwiftPM universal arm64 + x86_64)..."
+if swift build -c release --arch arm64 --arch x86_64; then
+    echo "  ✓ Universal binary build successful."
+else
+    echo "  ! Multi-arch build failed, falling back to native architecture..."
+    swift build -c release
+fi
+
+SWIFT_BIN_DIR=".build/release"
+if [ -f ".build/out/Products/Release/dynaQ" ]; then
+    SWIFT_BIN_DIR=".build/out/Products/Release"
+elif [ -f ".build/apple/Products/Release/dynaQ" ]; then
+    SWIFT_BIN_DIR=".build/apple/Products/Release"
+fi
+echo "  ✓ Located Swift binaries in: $SWIFT_BIN_DIR"
 
 # 
 # 2. Generate Native Multi-Resolution Retina AppIcon.icns
@@ -58,8 +71,9 @@ echo "  ✓ DynaQDriver.driver compiled and signed."
 # 
 # 4. Build Standalone C DSP Benchmark & Diagnostic Utility
 # 
-echo "\n[4/8] Compiling native DSP benchmark CLI utility..."
+echo "\n[4/8] Compiling native DSP benchmark CLI utility (universal arm64 + x86_64)..."
 clang -O3 \
+    -arch arm64 -arch x86_64 \
     docker/cli_main.c \
     Sources/CDspKernel/CDspKernel.c \
     -I Sources/CDspKernel/include \
@@ -97,8 +111,8 @@ mkdir -p "$APP_BUNDLE/Contents/Resources/python"
 mkdir -p "$APP_BUNDLE/Contents/Resources/driver"
 
 # Executables & Native Helpers
-cp ".build/release/dynaQ" "$APP_BUNDLE/Contents/MacOS/dynaQ"
-cp ".build/release/dynaQ-router" "$APP_BUNDLE/Contents/Helpers/dynaQ-router"
+cp "$SWIFT_BIN_DIR/dynaQ" "$APP_BUNDLE/Contents/MacOS/dynaQ"
+cp "$SWIFT_BIN_DIR/dynaQ-router" "$APP_BUNDLE/Contents/Helpers/dynaQ-router"
 cp "$DIST_DIR/dynaq-cli" "$APP_BUNDLE/Contents/Helpers/dynaq-cli"
 cp "$DIST_DIR/dynaq-opt" "$APP_BUNDLE/Contents/Helpers/dynaq-opt"
 cp "$DIST_DIR/libdynaq_rust.dylib" "$APP_BUNDLE/Contents/Frameworks/libdynaq_rust.dylib"
@@ -184,8 +198,15 @@ EOF
 
 echo -n "APPL????" > "$APP_BUNDLE/Contents/PkgInfo"
 
-# Codesign .app Bundle
-codesign --force --deep --sign - "$APP_BUNDLE"
+# Codesign .app Bundle with Hardened Runtime & Entitlements
+SIGN_APP_ID="${DEVELOPER_ID_APP:--}"
+ENTITLEMENTS_FLAG=""
+if [ -f "$REPO_ROOT/dynaQ.entitlements" ]; then
+    ENTITLEMENTS_FLAG="--entitlements $REPO_ROOT/dynaQ.entitlements"
+fi
+
+echo "  Signing dynaQ.app (Identity: $SIGN_APP_ID)..."
+codesign --force --deep --options runtime $ENTITLEMENTS_FLAG --sign "$SIGN_APP_ID" "$APP_BUNDLE"
 codesign --verify --deep --strict "$APP_BUNDLE"
 echo "  ✓ Self-contained application bundle signed and verified."
 
@@ -207,8 +228,8 @@ mkdir -p "$PKG_SCRIPTS"
 cp -R "$APP_BUNDLE" "$PKG_ROOT/Applications/"
 
 # 2. Install pre-compiled CLI tools to /usr/local/bin
-cp ".build/release/dynaQ" "$PKG_ROOT/usr/local/bin/dynaq"
-cp ".build/release/dynaQ-router" "$PKG_ROOT/usr/local/bin/dynaq-router"
+cp "$SWIFT_BIN_DIR/dynaQ" "$PKG_ROOT/usr/local/bin/dynaq"
+cp "$SWIFT_BIN_DIR/dynaQ-router" "$PKG_ROOT/usr/local/bin/dynaq-router"
 cp "$DIST_DIR/dynaq-opt" "$PKG_ROOT/usr/local/bin/dynaq-opt"
 cp "$DIST_DIR/libdynaq_rust.dylib" "$PKG_ROOT/usr/local/lib/libdynaq_rust.dylib"
 
@@ -248,7 +269,7 @@ if [ -d "/Library/Audio/Plug-Ins/HAL/DynaQDriver.driver" ]; then
     chown -R root:wheel /Library/Audio/Plug-Ins/HAL/DynaQDriver.driver 2>/dev/null || true
     chmod -R 755 /Library/Audio/Plug-Ins/HAL/DynaQDriver.driver 2>/dev/null || true
     # Restart CoreAudio daemon so the driver is recognized immediately
-    killall coreaudiod 2>/dev/null || true
+    launchctl kickstart -kp system/com.apple.audio.coreaudiod 2>/dev/null || killall coreaudiod 2>/dev/null || true
 fi
 
 exit 0
@@ -283,7 +304,12 @@ cat <<EOF > "$DIST_DIR/Distribution.xml"
 </installer-gui-script>
 EOF
 
-productbuild \
+PRODUCTBUILD_ARGS=()
+if [ -n "$DEVELOPER_ID_INSTALLER" ]; then
+    PRODUCTBUILD_ARGS+=(--sign "$DEVELOPER_ID_INSTALLER")
+fi
+
+productbuild "${PRODUCTBUILD_ARGS[@]}" \
     --distribution "$DIST_DIR/Distribution.xml" \
     --package-path "$DIST_DIR" \
     "$DIST_DIR/dynaQ-Installer.pkg"
@@ -443,6 +469,17 @@ MINIMUM REQUIREMENTS:
 EOF
 
 shasum -a 256 "dynaQ-Installer.dmg" "dynaQ-Installer.pkg" > SHA256SUMS.txt
+
+if [ -n "$NOTARY_KEYCHAIN_PROFILE" ]; then
+    echo "\nSubmitting installer to Apple Notary Service..."
+    xcrun notarytool submit "dynaQ-Installer.pkg" \
+        --keychain-profile "$NOTARY_KEYCHAIN_PROFILE" \
+        --wait
+    xcrun stapler staple "dynaQ-Installer.pkg"
+    xcrun stapler staple "dynaQ-Installer.dmg"
+    echo "  ✓ Apple Notarization complete and tickets stapled."
+fi
+
 cd "$REPO_ROOT"
 
 echo "\n======================================================================"

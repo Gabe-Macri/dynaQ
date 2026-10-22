@@ -34,9 +34,10 @@ public final class PresetStore: @unchecked Sendable {
         for file in files where file.pathExtension == "json" {
             if let data = try? Data(contentsOf: file),
                let profile = try? decoder.decode(EQProfile.self, from: data) {
+                let sanitizedProfile = profile.sanitized()
                 // Do not override factory presets with the same ID
-                if !profiles.contains(where: { $0.id == profile.id }) {
-                    profiles.append(profile)
+                if !profiles.contains(where: { $0.id == sanitizedProfile.id }) {
+                    profiles.append(sanitizedProfile)
                 }
             }
         }
@@ -44,15 +45,16 @@ public final class PresetStore: @unchecked Sendable {
         return profiles
     }
 
-    /// Saves a custom preset to disk.
+    /// Saves a custom preset to disk atomically.
     public func saveProfile(_ profile: EQProfile) throws {
         createDirectoryIfNeeded()
-        let fileURL = presetsDirectory.appendingPathComponent("\(profile.id.uuidString).json")
+        let sanitized = profile.sanitized()
+        let fileURL = presetsDirectory.appendingPathComponent("\(sanitized.id.uuidString).json")
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(profile)
-        try data.write(to: fileURL)
+        let data = try encoder.encode(sanitized)
+        try data.write(to: fileURL, options: .atomic)
     }
 
     /// Deletes a custom preset from disk.

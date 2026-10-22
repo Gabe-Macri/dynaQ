@@ -96,4 +96,30 @@ public struct EQProfile: Identifiable, Codable, Equatable, Sendable {
         copy.updatedAt = Date()
         return copy
     }
+
+    /// Sanitizes all profile parameters, clamping out-of-range gains, frequencies, and Q factors,
+    /// and safely recovering from NaN or Infinite floating-point values.
+    public func sanitized() -> EQProfile {
+        var copy = self
+        copy.preampGain = preampGain.isFinite ? max(-36.0, min(36.0, preampGain)) : 0.0
+        copy.masterGain = masterGain.isFinite ? max(-36.0, min(36.0, masterGain)) : 0.0
+        copy.limiterCeiling = limiterCeiling.isFinite ? max(-24.0, min(0.0, limiterCeiling)) : -0.2
+        copy.bands = bands.map { band in
+            var b = band
+            b.frequency = (band.frequency.isFinite && band.frequency >= 10.0 && band.frequency <= 24000.0)
+                ? band.frequency
+                : 1000.0
+            b.gain = band.gain.isFinite ? max(-36.0, min(36.0, band.gain)) : 0.0
+            b.q = (band.q.isFinite && band.q >= 0.05 && band.q <= 30.0) ? band.q : 1.0
+            b.dynamicThreshold = band.dynamicThreshold.isFinite ? max(-96.0, min(0.0, band.dynamicThreshold)) : -24.0
+            b.dynamicRange = band.dynamicRange.isFinite ? max(-36.0, min(36.0, band.dynamicRange)) : 0.0
+            b.dynamicRatio = (band.dynamicRatio.isFinite && band.dynamicRatio >= 1.0) ? min(20.0, band.dynamicRatio) : 2.0
+            b.attackMs = (band.attackMs.isFinite && band.attackMs >= 0.1) ? min(1000.0, band.attackMs) : 10.0
+            b.releaseMs = (band.releaseMs.isFinite && band.releaseMs >= 1.0) ? min(5000.0, band.releaseMs) : 100.0
+            b.fmRate = (band.fmRate.isFinite && band.fmRate >= 0.05) ? min(50.0, band.fmRate) : 1.0
+            b.fmDepth = (band.fmDepth.isFinite && band.fmDepth >= 0.0) ? min(4.0, band.fmDepth) : 1.0
+            return b
+        }
+        return copy
+    }
 }

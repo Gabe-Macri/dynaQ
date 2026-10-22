@@ -149,6 +149,29 @@ public struct MainWindowView: View {
                 .transition(.opacity)
             }
 
+            // Safe Recovery Mode Banner
+            if state.isSafeMode {
+                HStack(spacing: 8) {
+                    Rectangle()
+                        .fill(DynaQTheme.amber)
+                        .frame(width: 4, height: 18)
+
+                    Text("// SAFE RECOVERY MODE ENGAGED // DSP BYPASSED // FACTORY FLAT ACTIVE")
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .foregroundColor(DynaQTheme.amber)
+
+                    Spacer()
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(DynaQTheme.surface)
+                .overlay(
+                    Rectangle().stroke(DynaQTheme.amber.opacity(0.6), lineWidth: 1)
+                )
+                .padding(.horizontal, 12)
+                .transition(.opacity)
+            }
+
             // Primary Interactive Parametric EQ Curve & Live Spectrum Visualizer
             EQCurveView(
                 profile: Binding(

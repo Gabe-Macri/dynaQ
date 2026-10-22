@@ -18,6 +18,7 @@ func printHelp() {
 
     OPTIONS:
       --gui                 Launch the full graphical studio interface (default)
+      --safe-mode           Launch in safe recovery mode (flat EQ, DSP bypassed)
       --list-devices        Enumerate CoreAudio I/O hardware, channels, and latencies
       --driver-status       Check dynaQ Virtual Audio Driver installation status
       --help, -h            Show this help reference

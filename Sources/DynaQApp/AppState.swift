@@ -31,8 +31,23 @@ public struct DiagnosticLog: Identifiable, Sendable {
 public final class AppState: ObservableObject {
     public static let shared = AppState()
 
+    // Persistence Keys
+    private static let keyActiveSlot = "dynaq.pref.active_slot"
+    private static let keyActiveProfileID = "dynaq.pref.active_profile_id"
+    private static let keyOutputDeviceUID = "dynaq.pref.output_device_uid"
+    private static let keyBufferSize = "dynaq.pref.buffer_size"
+    private static let keyFeedbackProtection = "dynaq.pref.feedback_protection"
+    private static let keyLimiterLiveMode = "dynaq.pref.limiter_live_mode"
+
+    // Safe Recovery Mode
+    @Published public var isSafeMode: Bool = false
+
     // A/B Comparison States
-    @Published public var activeSlot: ComparisonSlot = .slotA
+    @Published public var activeSlot: ComparisonSlot = .slotA {
+        didSet {
+            UserDefaults.standard.set(activeSlot.rawValue, forKey: Self.keyActiveSlot)
+        }
+    }
     @Published public var profileA: EQProfile
     @Published public var profileB: EQProfile
 
@@ -45,6 +60,7 @@ public final class AppState: ObservableObject {
             } else {
                 profileB = newValue
             }
+            UserDefaults.standard.set(newValue.id.uuidString, forKey: Self.keyActiveProfileID)
             syncProfileToEngine(newValue)
         }
     }
@@ -60,17 +76,29 @@ public final class AppState: ObservableObject {
     @Published public var tapAllProcesses: Bool = true
 
     @Published public var selectedInputDevice: AudioDevice?
-    @Published public var selectedOutputDevice: AudioDevice?
-    @Published public var selectedBufferSize: UInt32 = 256
+    @Published public var selectedOutputDevice: AudioDevice? {
+        didSet {
+            if let uid = selectedOutputDevice?.uid {
+                UserDefaults.standard.set(uid, forKey: Self.keyOutputDeviceUID)
+            }
+        }
+    }
+    @Published public var selectedBufferSize: UInt32 = 256 {
+        didSet {
+            UserDefaults.standard.set(Int(selectedBufferSize), forKey: Self.keyBufferSize)
+        }
+    }
     @Published public var roundtripLatencyMs: Double = 0.0
     @Published public var feedbackProtection: Bool = true {
         didSet {
+            UserDefaults.standard.set(feedbackProtection, forKey: Self.keyFeedbackProtection)
             engineManager.feedbackProtectionEnabled = feedbackProtection
             logDiagnostic(level: "INFO", message: "Feedback protection \(feedbackProtection ? "ENABLED" : "DISABLED")")
         }
     }
     @Published public var isLiveMode: Bool = false {
         didSet {
+            UserDefaults.standard.set(isLiveMode, forKey: Self.keyLimiterLiveMode)
             currentProfile.isLiveMode = isLiveMode
             dspPipeline.limiter.isLiveMode = isLiveMode
             logDiagnostic(level: "DSP", message: "Zero-Latency Live Tracking Mode \(isLiveMode ? "ENABLED (0ms delay for DAW)" : "DISABLED (Mastering True Peak)")")
@@ -105,13 +133,50 @@ public final class AppState: ObservableObject {
     public let dspPipeline: ClientDSPPipeline
 
     public init() {
+        let isSafe = CommandLine.arguments.contains("--safe-mode")
+        self.isSafeMode = isSafe
+
         let loadedPresets = presetStore.loadAllProfiles()
         self.presets = loadedPresets
-        let initial = loadedPresets.first ?? DefaultPresets.harmanHeadphoneTarget
+
+        let initial: EQProfile
+        if isSafe {
+            var flat = DefaultPresets.studioFlat
+            flat.isBypassed = true
+            initial = flat
+        } else {
+            // Restore saved profile or default to Harman
+            if let savedIDString = UserDefaults.standard.string(forKey: Self.keyActiveProfileID),
+               let savedUUID = UUID(uuidString: savedIDString),
+               let found = loadedPresets.first(where: { $0.id == savedUUID }) {
+                initial = found
+            } else {
+                initial = loadedPresets.first ?? DefaultPresets.harmanHeadphoneTarget
+            }
+        }
 
         self.profileA = initial
         self.profileB = initial.duplicate(newName: "\(initial.name) (B)")
         self.selectedBandID = initial.bands.first?.id
+
+        if !isSafe {
+            if let savedSlotRaw = UserDefaults.standard.string(forKey: Self.keyActiveSlot),
+               let slot = ComparisonSlot(rawValue: savedSlotRaw) {
+                self.activeSlot = slot
+            }
+            if UserDefaults.standard.object(forKey: Self.keyBufferSize) != nil {
+                let savedBuffer = UInt32(UserDefaults.standard.integer(forKey: Self.keyBufferSize))
+                if savedBuffer >= 64 && savedBuffer <= 2048 {
+                    self.selectedBufferSize = savedBuffer
+                }
+            }
+            if UserDefaults.standard.object(forKey: Self.keyFeedbackProtection) != nil {
+                self.feedbackProtection = UserDefaults.standard.bool(forKey: Self.keyFeedbackProtection)
+            }
+            if UserDefaults.standard.object(forKey: Self.keyLimiterLiveMode) != nil {
+                self.isLiveMode = UserDefaults.standard.bool(forKey: Self.keyLimiterLiveMode)
+            }
+        }
 
         let coreAudio = CoreAudioManager.shared
         let defOutRate = Float(coreAudio.fetchAllDevices().first(where: { $0.id == coreAudio.getDefaultOutputDeviceID() })?.currentSampleRate ?? 48000.0)
@@ -121,9 +186,14 @@ public final class AppState: ObservableObject {
         self.appRoutes = []
 
         setupAudioEngineBindings()
+        setupPowerLifecycleObservers()
         refreshHardwareDevices()
         refreshAudioApps()
         startLiveSystemAudio()
+
+        if isSafe {
+            logDiagnostic(level: "WARN", message: "SAFE RECOVERY MODE ACTIVE: Audio processing bypassed, flat reference engaged.")
+        }
     }
 
     public func logDiagnostic(level: String, message: String) {
@@ -331,9 +401,47 @@ public final class AppState: ObservableObject {
         self.devices = coreAudioManager.fetchAllDevices()
         let defOutID = coreAudioManager.getDefaultOutputDeviceID()
         let defInID = coreAudioManager.getDefaultInputDeviceID()
-        self.selectedOutputDevice = devices.first(where: { $0.id == defOutID })
+
+        // Restore previously selected device UID if still connected
+        if let savedUID = UserDefaults.standard.string(forKey: Self.keyOutputDeviceUID),
+           let matched = devices.first(where: { $0.uid == savedUID && $0.isOutput }) {
+            self.selectedOutputDevice = matched
+        } else {
+            self.selectedOutputDevice = devices.first(where: { $0.id == defOutID })
+        }
         self.selectedInputDevice = devices.first(where: { $0.id == defInID })
-        logDiagnostic(level: "INFO", message: "Hardware devices refreshed (default out: #\(defOutID), default in: #\(defInID))")
+        logDiagnostic(level: "INFO", message: "Hardware devices refreshed (selected out: #\(selectedOutputDevice?.id ?? defOutID), default in: #\(defInID))")
+    }
+
+    private func setupPowerLifecycleObservers() {
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.willSleepNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self = self else { return }
+                self.logDiagnostic(level: "INFO", message: "System sleep event detected. Halting audio IOProc...")
+                self.engineManager.stop()
+                self.isEngineOnline = false
+            }
+        }
+
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self = self else { return }
+                self.logDiagnostic(level: "INFO", message: "System wake event detected. Re-synchronizing hardware audio...")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                    guard let self = self else { return }
+                    self.refreshHardwareDevices()
+                    self.startLiveSystemAudio()
+                }
+            }
+        }
     }
 
     public func refreshAudioApps() {
@@ -554,6 +662,7 @@ public final class AppState: ObservableObject {
             profileB = preset
         }
         selectedBandID = preset.bands.first?.id
+        UserDefaults.standard.set(preset.id.uuidString, forKey: Self.keyActiveProfileID)
         syncProfileToEngine(preset)
     }
 
