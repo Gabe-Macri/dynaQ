@@ -39,6 +39,7 @@ public struct SettingsView: View {
     public let underrunCount: Int
     public let isEngineOnline: Bool
     public let diagnosticLogs: [(timestamp: String, level: String, message: String)]
+    public let isDriverInstalled: Bool
 
     // Callbacks
     public let onSelectCaptureSource: (AudioCaptureSource) -> Void
@@ -54,6 +55,7 @@ public struct SettingsView: View {
     public let onResetEngine: () -> Void
     public let onRefreshDevices: () -> Void
     public let onClearLogs: () -> Void
+    public let onInstallDriver: () -> Void
     public let onClose: () -> Void
 
     public init(
@@ -73,6 +75,7 @@ public struct SettingsView: View {
         underrunCount: Int,
         isEngineOnline: Bool,
         diagnosticLogs: [(timestamp: String, level: String, message: String)],
+        isDriverInstalled: Bool = FileManager.default.fileExists(atPath: "/Library/Audio/Plug-Ins/HAL/DynaQDriver.driver"),
         onSelectCaptureSource: @escaping (AudioCaptureSource) -> Void,
         onSelectApp: @escaping (AudioAppProcess) -> Void,
         onToggleTapAllProcesses: @escaping (Bool) -> Void,
@@ -86,6 +89,7 @@ public struct SettingsView: View {
         onResetEngine: @escaping () -> Void,
         onRefreshDevices: @escaping () -> Void,
         onClearLogs: @escaping () -> Void,
+        onInstallDriver: @escaping () -> Void = {},
         onClose: @escaping () -> Void
     ) {
         self.captureSource = captureSource
@@ -104,6 +108,7 @@ public struct SettingsView: View {
         self.underrunCount = underrunCount
         self.isEngineOnline = isEngineOnline
         self.diagnosticLogs = diagnosticLogs
+        self.isDriverInstalled = isDriverInstalled
         self.onSelectCaptureSource = onSelectCaptureSource
         self.onSelectApp = onSelectApp
         self.onToggleTapAllProcesses = onToggleTapAllProcesses
@@ -117,6 +122,7 @@ public struct SettingsView: View {
         self.onResetEngine = onResetEngine
         self.onRefreshDevices = onRefreshDevices
         self.onClearLogs = onClearLogs
+        self.onInstallDriver = onInstallDriver
         self.onClose = onClose
     }
 
@@ -713,6 +719,39 @@ public struct SettingsView: View {
             }
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .background(DynaQTheme.surface)
+            .overlay(
+                Rectangle().stroke(DynaQTheme.surfaceBorder, lineWidth: 1)
+            )
+
+            sectionHeader("COREAUDIO VIRTUAL HAL DRIVER")
+
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("HAL PLUGIN: \(isDriverInstalled ? "INSTALLED & ACTIVE" : "NOT DEPLOYED IN SYSTEM")")
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .foregroundColor(isDriverInstalled ? DynaQTheme.phosphorGreen : DynaQTheme.phosphorAmber)
+                    Text(isDriverInstalled ? "/Library/Audio/Plug-Ins/HAL/DynaQDriver.driver" : "Install virtual driver to enable aggregate DAW routing and system loopback")
+                        .font(.system(size: 8, design: .monospaced))
+                        .foregroundColor(DynaQTheme.textMuted)
+                }
+
+                Spacer()
+
+                Button(action: onInstallDriver) {
+                    Text(isDriverInstalled ? "[ REINSTALL / UPDATE ]" : "[ INSTALL DRIVER ]")
+                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(DynaQTheme.surfaceElevated)
+                        .foregroundColor(isDriverInstalled ? DynaQTheme.textMuted : DynaQTheme.terminalCyan)
+                        .overlay(
+                            Rectangle().stroke(isDriverInstalled ? DynaQTheme.surfaceBorder : DynaQTheme.terminalCyan, lineWidth: 1)
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(10)
             .background(DynaQTheme.surface)
             .overlay(
                 Rectangle().stroke(DynaQTheme.surfaceBorder, lineWidth: 1)

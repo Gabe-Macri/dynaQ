@@ -258,6 +258,7 @@ public struct MainWindowView: View {
                 underrunCount: state.underrunCount,
                 isEngineOnline: state.isEngineOnline,
                 diagnosticLogs: state.diagnosticLogs.map { ($0.timestamp, $0.level, $0.message) },
+                isDriverInstalled: state.isHalDriverInstalled,
                 onSelectCaptureSource: { state.setCaptureSource($0) },
                 onSelectApp: { state.selectAudioApp($0) },
                 onToggleTapAllProcesses: { state.setTapAllProcesses($0) },
@@ -271,6 +272,7 @@ public struct MainWindowView: View {
                 onResetEngine: { state.resetAudioEngine() },
                 onRefreshDevices: { state.refreshHardwareDevices() },
                 onClearLogs: { state.clearDiagnosticLogs() },
+                onInstallDriver: { state.installHalDriver() },
                 onClose: { state.showSettingsModal = false }
             )
         }

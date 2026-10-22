@@ -2,12 +2,10 @@
 set -e
 
 # ==============================================================================
-# dynaQ Production Release & Complete All-In-One Installer Packaging Script
-# Generates:
-#   1. dist/dynaQ.app (Self-contained, double-clickable macOS Application)
-#   2. dist/dynaQ-1.0.0-beta.1.dmg (Minimal Drag-and-Drop DMG)
-#   3. dist/dynaQ-1.0.0-beta.1-complete.pkg (Native macOS All-In-One Installer)
-#   4. dist/dynaQ-1.0.0-beta.1-all-in-one.dmg (Complete DMG with PKG, App & Tools)
+# dynaQ Unified Production All-In-One Installer Packaging Script
+# Wraps all components into a single plug-and-play installer:
+#   • dynaQ-Installer.dmg (Unified DMG with native PKG, app bundle, and uninstaller)
+#   • dynaQ-Installer.pkg (Native macOS distribution installer)
 # ==============================================================================
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -20,9 +18,8 @@ OUTPUT_DIR="$REPO_ROOT/output"
 APP_BUNDLE="$DIST_DIR/dynaQ.app"
 DRIVER_BUNDLE="$DIST_DIR/DynaQDriver.driver"
 
-DMG_MINIMAL="dynaQ-${APP_VERSION}.dmg"
-DMG_ALL_IN_ONE="dynaQ-${APP_VERSION}-all-in-one.dmg"
-PKG_COMPLETE="dynaQ-${APP_VERSION}-complete.pkg"
+INSTALLER_DMG="dynaQ-Installer.dmg"
+INSTALLER_PKG="dynaQ-Installer.pkg"
 
 echo "======================================================================"
 echo "  DYNAQ PRODUCTION RELEASE & ALL-IN-ONE INSTALLER BUILD"
@@ -178,12 +175,12 @@ codesign --verify --deep --strict "$APP_BUNDLE"
 echo "  ✓ Self-contained application bundle signed and verified."
 
 # ------------------------------------------------------------------------------
-# 6. Build Native macOS All-In-One Package (.pkg)
+# 6. Build Native macOS All-In-One Distribution Package (.pkg)
 # ------------------------------------------------------------------------------
-echo "\n[6/8] Building native macOS All-In-One Installer Package (${PKG_COMPLETE})..."
+echo "\n[6/7] Building unified all-in-one macOS installer package..."
 PKG_ROOT="$DIST_DIR/pkg_root"
 PKG_SCRIPTS="$DIST_DIR/pkg_scripts"
-rm -rf "$PKG_ROOT" "$PKG_SCRIPTS"
+rm -rf "$PKG_ROOT" "$PKG_SCRIPTS" "$DIST_DIR/dynaQ-component.pkg" "$DIST_DIR/dynaQ-Installer.pkg"
 mkdir -p "$PKG_ROOT/Applications"
 mkdir -p "$PKG_ROOT/usr/local/bin"
 mkdir -p "$PKG_ROOT/Library/Audio/Plug-Ins/HAL"
@@ -227,49 +224,52 @@ exit 0
 POSTINSTALL_EOF
 chmod +x "$PKG_SCRIPTS/postinstall"
 
-# Build Package
+# Build Component Package
 pkgbuild \
     --root "$PKG_ROOT" \
     --scripts "$PKG_SCRIPTS" \
     --identifier "com.dynaq.audio.pkg.complete" \
     --version "${APP_VERSION}" \
     --install-location "/" \
-    "$DIST_DIR/$PKG_COMPLETE"
+    "$DIST_DIR/dynaQ-component.pkg"
 
-rm -rf "$PKG_ROOT" "$PKG_SCRIPTS"
-echo "  ✓ Native installer package generated: $DIST_DIR/$PKG_COMPLETE"
+# Create synthesized Distribution XML with custom title
+cat <<EOF > "$DIST_DIR/Distribution.xml"
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="1">
+    <title>dynaQ Professional Audio Suite</title>
+    <options customize="never" require-scripts="false" hostArchitectures="x86_64,arm64" rootVolumeOnly="true"/>
+    <choices-outline>
+        <line choice="default">
+            <line choice="com.dynaq.audio.pkg.complete"/>
+        </line>
+    </choices-outline>
+    <choice id="default"/>
+    <choice id="com.dynaq.audio.pkg.complete" visible="false">
+        <pkg-ref id="com.dynaq.audio.pkg.complete"/>
+    </choice>
+    <pkg-ref id="com.dynaq.audio.pkg.complete" version="${APP_VERSION}" onConclusion="none">dynaQ-component.pkg</pkg-ref>
+</installer-gui-script>
+EOF
+
+productbuild \
+    --distribution "$DIST_DIR/Distribution.xml" \
+    --package-path "$DIST_DIR" \
+    "$DIST_DIR/dynaQ-Installer.pkg"
+
+rm -rf "$PKG_ROOT" "$PKG_SCRIPTS" "$DIST_DIR/dynaQ-component.pkg" "$DIST_DIR/Distribution.xml"
+echo "  ✓ Unified native installer package created: $DIST_DIR/dynaQ-Installer.pkg"
 
 # ------------------------------------------------------------------------------
-# 7. Build Minimal Drag-and-Drop DMG
+# 7. Build Unified All-In-One Disk Image (.dmg)
 # ------------------------------------------------------------------------------
-echo "\n[7/8] Creating minimal drag-and-drop installer DMG (${DMG_MINIMAL})..."
-MINIMAL_STAGING="$DIST_DIR/minimal_staging"
-rm -rf "$MINIMAL_STAGING" "$DIST_DIR/$DMG_MINIMAL"
-mkdir -p "$MINIMAL_STAGING"
-
-cp -R "$APP_BUNDLE" "$MINIMAL_STAGING/"
-ln -s /Applications "$MINIMAL_STAGING/Applications"
-
-hdiutil create \
-    -volname "dynaQ" \
-    -srcfolder "$MINIMAL_STAGING" \
-    -ov \
-    -format UDZO \
-    "$DIST_DIR/$DMG_MINIMAL"
-
-rm -rf "$MINIMAL_STAGING"
-echo "  ✓ Minimal drag-and-drop DMG created: $DIST_DIR/$DMG_MINIMAL"
-
-# ------------------------------------------------------------------------------
-# 8. Build Complete All-In-One Disk Image (DMG)
-# ------------------------------------------------------------------------------
-echo "\n[8/8] Creating comprehensive All-In-One disk image (${DMG_ALL_IN_ONE})..."
+echo "\n[7/7] Creating unified All-In-One installer disk image (dynaQ-Installer.dmg)..."
 ALL_IN_ONE_STAGING="$DIST_DIR/all_in_one_staging"
-rm -rf "$ALL_IN_ONE_STAGING" "$DIST_DIR/$DMG_ALL_IN_ONE"
+rm -rf "$ALL_IN_ONE_STAGING" "$DIST_DIR/dynaQ-Installer.dmg"
 mkdir -p "$ALL_IN_ONE_STAGING"
 
 # 1. Native Installer Package (.pkg)
-cp "$DIST_DIR/$PKG_COMPLETE" "$ALL_IN_ONE_STAGING/Install dynaQ Complete.pkg"
+cp "$DIST_DIR/dynaQ-Installer.pkg" "$ALL_IN_ONE_STAGING/Install dynaQ.pkg"
 
 # 2. Standalone Application Bundle
 cp -R "$APP_BUNDLE" "$ALL_IN_ONE_STAGING/dynaQ.app"
@@ -319,7 +319,7 @@ cat <<EOF > "$ALL_IN_ONE_STAGING/README.txt"
 INSTALLATION OPTIONS:
 
 1. ALL-IN-ONE AUTOMATED INSTALLER (RECOMMENDED):
-   Double-click "Install dynaQ Complete.pkg".
+   Double-click "Install dynaQ.pkg".
    This automatically installs:
      - dynaQ.app into /Applications
      - dynaq & dynaq-router CLI commands into /usr/local/bin
@@ -328,6 +328,7 @@ INSTALLATION OPTIONS:
 
 2. DRAG-AND-DROP INSTALLATION:
    Drag "dynaQ.app" directly into the "Applications" shortcut.
+   The app is self-contained with embedded driver, docs, and routing daemon.
 
 3. UNINSTALLATION:
    Double-click "Uninstall dynaQ.command" to cleanly remove all components.
@@ -339,34 +340,61 @@ DOCUMENTATION:
 EOF
 
 hdiutil create \
-    -volname "dynaQ Complete Setup" \
+    -volname "dynaQ Installer" \
     -srcfolder "$ALL_IN_ONE_STAGING" \
     -ov \
     -format UDZO \
-    "$DIST_DIR/$DMG_ALL_IN_ONE"
+    "$DIST_DIR/dynaQ-Installer.dmg"
 
 rm -rf "$ALL_IN_ONE_STAGING"
-echo "  ✓ All-In-One disk image created: $DIST_DIR/$DMG_ALL_IN_ONE"
+echo "  ✓ Unified All-In-One disk image created: $DIST_DIR/dynaQ-Installer.dmg"
 
 # ------------------------------------------------------------------------------
-# Copy All Final Artifacts to Untracked output/ Folder
+# Populate output/ distribution folder with Unified Installer only
 # ------------------------------------------------------------------------------
-echo "\nPopulating output/ distribution folder..."
-cp "$DIST_DIR/$DMG_MINIMAL" "$OUTPUT_DIR/"
-cp "$DIST_DIR/$DMG_ALL_IN_ONE" "$OUTPUT_DIR/"
-cp "$DIST_DIR/$PKG_COMPLETE" "$OUTPUT_DIR/"
-cp "$DIST_DIR/AppIcon.icns" "$OUTPUT_DIR/"
-cp -R "$APP_BUNDLE" "$OUTPUT_DIR/"
-cp -R "$DRIVER_BUNDLE" "$OUTPUT_DIR/"
-cp ".build/release/dynaQ-router" "$OUTPUT_DIR/"
+echo "\nPopulating output/ distribution folder with unified installer..."
+rm -rf "$OUTPUT_DIR"/*
 
-# Compute and update SHA256SUMS
+cp "$DIST_DIR/dynaQ-Installer.dmg" "$OUTPUT_DIR/"
+cp "$DIST_DIR/dynaQ-Installer.pkg" "$OUTPUT_DIR/"
+
 cd "$OUTPUT_DIR"
-shasum -a 256 "$DMG_MINIMAL" "$DMG_ALL_IN_ONE" "$PKG_COMPLETE" "dynaQ-router" > SHA256SUMS.txt
+ln -sf "dynaQ-Installer.dmg" "dynaQ-${APP_VERSION}-Installer.dmg"
+ln -sf "dynaQ-Installer.pkg" "dynaQ-${APP_VERSION}-Installer.pkg"
+
+cat <<EOF > "$OUTPUT_DIR/RELEASE_NOTES.txt"
+======================================================================
+  DYNAQ v${APP_VERSION} — UNIFIED ALL-IN-ONE INSTALLER
+======================================================================
+
+PACKAGE CONTENTS:
+  • dynaQ-Installer.dmg    : Complete Unified Disk Image Installer
+  • dynaQ-Installer.pkg    : Native macOS Automated Installer Package
+  • SHA256SUMS.txt         : Cryptographic verification checksums
+
+INSTALLATION:
+  Method A: Double-click "dynaQ-Installer.pkg" (or open "dynaQ-Installer.dmg" and run "Install dynaQ.pkg")
+            This automatically installs:
+              - /Applications/dynaQ.app
+              - /Library/Audio/Plug-Ins/HAL/DynaQDriver.driver (CoreAudio HAL Driver)
+              - /usr/local/bin/dynaq & dynaq-router (CLI tools)
+              - Configures permissions and reloads CoreAudio daemon
+            Plug-and-play: zero external dependencies, no brew or terminal setup required.
+
+  Method B: Open "dynaQ-Installer.dmg" and drag "dynaQ.app" into Applications.
+            dynaQ is fully self-contained with embedded driver, docs, and routing daemon.
+
+MINIMUM REQUIREMENTS:
+  • macOS 14.0 (Sonoma) or later
+  • Apple Silicon or Intel 64-bit architecture
+======================================================================
+EOF
+
+shasum -a 256 "dynaQ-Installer.dmg" "dynaQ-Installer.pkg" > SHA256SUMS.txt
 cd "$REPO_ROOT"
 
 echo "\n======================================================================"
-echo "  ✓ ALL PACKAGES CREATED SUCCESSFULLY IN output/"
+echo "  ✓ UNIFIED INSTALLER CREATED SUCCESSFULLY IN output/"
 echo "======================================================================"
 ls -lh "$OUTPUT_DIR"
 echo "======================================================================"

@@ -280,6 +280,37 @@ public final class AppState: ObservableObject {
         logDiagnostic(level: "INFO", message: "Audio engine reset completed successfully.")
     }
 
+    public var isHalDriverInstalled: Bool {
+        FileManager.default.fileExists(atPath: "/Library/Audio/Plug-Ins/HAL/DynaQDriver.driver")
+    }
+
+    public func installHalDriver() {
+        guard let bundleResourcePath = Bundle.main.resourcePath else { return }
+        let driverSource = "\(bundleResourcePath)/driver/DynaQDriver.driver"
+        guard FileManager.default.fileExists(atPath: driverSource) else {
+            logDiagnostic(level: "ERR", message: "Bundled driver not found at \(driverSource)")
+            activeErrorMessage = "Driver source not found inside application bundle."
+            return
+        }
+
+        let script = """
+        do shell script "mkdir -p /Library/Audio/Plug-Ins/HAL && cp -R '\(driverSource)' /Library/Audio/Plug-Ins/HAL/ && chown -R root:wheel /Library/Audio/Plug-Ins/HAL/DynaQDriver.driver && chmod -R 755 /Library/Audio/Plug-Ins/HAL/DynaQDriver.driver && killall coreaudiod" with administrator privileges
+        """
+
+        if let appleScript = NSAppleScript(source: script) {
+            var errorDict: NSDictionary?
+            appleScript.executeAndReturnError(&errorDict)
+            if let err = errorDict {
+                let msg = err[NSAppleScript.errorMessage] as? String ?? "Authorization failed"
+                logDiagnostic(level: "ERR", message: "Driver install failed: \(msg)")
+                activeErrorMessage = "Driver installation failed: \(msg)"
+                return
+            }
+            logDiagnostic(level: "INFO", message: "Virtual HAL Audio Driver deployed and coreaudiod restarted.")
+            refreshHardwareDevices()
+        }
+    }
+
     public func startLiveSystemAudio() {
         do {
             refreshAudioApps()
