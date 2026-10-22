@@ -9,6 +9,20 @@ extern "C" {
 #endif
 
 // ============================================================================
+// 0. Unified C DSP Status & Error Codes
+// ============================================================================
+
+typedef enum {
+    C_DSP_OK = 0,
+    C_DSP_ERR_INVALID_PARAM = -1,
+    C_DSP_ERR_NULL_POINTER = -2,
+    C_DSP_ERR_UNSTABLE_FILTER = -3,
+    C_DSP_ERR_BUFFER_OVERRUN = -4,
+    C_DSP_ERR_BUFFER_UNDERRUN = -5,
+    C_DSP_ERR_NOT_INITIALIZED = -6
+} c_dsp_status_t;
+
+// ============================================================================
 // 1. Lock-Free Atomic Single-Producer Single-Consumer (SPSC) Ring Buffer
 // ============================================================================
 
@@ -30,6 +44,9 @@ size_t c_ringbuffer_read_stereo(c_ringbuffer_t* rb, float* left, float* right, s
 typedef struct {
     float b0, b1, b2, a1, a2;
 } c_biquad_coeffs_t;
+
+/// Jury stability test: returns true if filter poles are strictly inside the unit circle (|z| < 1)
+bool c_biquad_is_stable(c_biquad_coeffs_t coeffs);
 
 typedef struct {
     float s1_left, s2_left;
@@ -55,6 +72,7 @@ typedef struct {
 void c_eq_engine_init(c_eq_engine_t* eq);
 void c_eq_engine_reset_state(c_eq_engine_t* eq);
 void c_eq_engine_set_band(c_eq_engine_t* eq, int index, c_biquad_coeffs_t coeffs, int routing, bool enabled, bool immediate);
+c_dsp_status_t c_eq_engine_set_band_safe(c_eq_engine_t* eq, int index, c_biquad_coeffs_t coeffs, int routing, bool enabled, bool immediate);
 void c_eq_engine_set_gains(c_eq_engine_t* eq, float preamp_gain_linear, float master_gain_linear);
 void c_eq_engine_set_params(c_eq_engine_t* eq, bool is_bypassed, bool phase_invert, int monitor_mode);
 void c_eq_engine_process_stereo(c_eq_engine_t* eq, float* left, float* right, size_t count);
@@ -67,13 +85,21 @@ void c_dsp_midside_encode(const float* left, const float* right, float* mid, flo
 void c_dsp_midside_decode(const float* mid, const float* side, float* left, float* right, size_t count);
 
 // ============================================================================
-// 4. Vectorized Dynamics: Soft-Knee Peak Limiter
+// 4. Vectorized Dynamics: True-Peak Soft-Knee Limiter & Lookahead Limiter
 // ============================================================================
 
 void c_dsp_limiter_process_stereo(float* left, float* right, size_t count, float linear_ceiling, bool enabled);
 
+typedef struct c_lookahead_limiter c_lookahead_limiter_t;
+
+c_lookahead_limiter_t* c_lookahead_limiter_create(size_t lookahead_samples, float sample_rate, float ceiling_linear);
+void c_lookahead_limiter_destroy(c_lookahead_limiter_t* lim);
+void c_lookahead_limiter_reset(c_lookahead_limiter_t* lim);
+void c_lookahead_limiter_set_ceiling(c_lookahead_limiter_t* lim, float ceiling_linear);
+void c_lookahead_limiter_process(c_lookahead_limiter_t* lim, float* left, float* right, size_t count);
+
 // ============================================================================
-// 5. Accelerate-Powered Telemetry: Peak, RMS & Clip Measurement
+// 5. Accelerate-Powered Telemetry: Peak, RMS, Clip & Phase Measurement
 // ============================================================================
 
 typedef struct {
@@ -97,6 +123,8 @@ void c_dsp_measure_loudness(
     bool* inout_clip_r,
     c_loudness_result_t* result
 );
+
+float c_dsp_measure_phase_correlation(const float* left, const float* right, size_t count);
 
 // ============================================================================
 // 6. Vector Utility Functions

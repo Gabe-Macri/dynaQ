@@ -2,6 +2,8 @@ import Foundation
 import os.lock
 import DynaQCore
 import DynaQAudioDriver
+import DynaQDynamics
+import DynaQAnalysis
 import CDspKernel
 
 /// Dedicated Client-Side DSP Processing Pipeline.

@@ -3,6 +3,8 @@ import Combine
 import CoreAudio
 import DynaQCore
 import DynaQDSP
+import DynaQDynamics
+import DynaQAnalysis
 import DynaQAudioDriver
 
 public enum ComparisonSlot: String, CaseIterable, Sendable {

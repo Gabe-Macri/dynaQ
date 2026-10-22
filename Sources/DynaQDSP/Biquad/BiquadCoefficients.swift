@@ -113,13 +113,25 @@ public struct BiquadCoefficients: Sendable, Equatable {
         // Normalize so a0 == 1.0
         guard a0 != 0.0 else { return .bypass }
         let invA0 = 1.0 / a0
-        return BiquadCoefficients(
+        let coeffs = BiquadCoefficients(
             b0: b0 * invA0,
             b1: b1 * invA0,
             b2: b2 * invA0,
             a1: a1 * invA0,
             a2: a2 * invA0
         )
+
+        // Validate pole stability: if poles lie on/outside unit circle, fail-safe to bypass
+        return coeffs.isStable ? coeffs : .bypass
+    }
+
+    /// Verifies stability according to the Jury / Schur-Cohn criterion (|z_poles| < 1.0).
+    public var isStable: Bool {
+        if a1.isNaN || a2.isNaN || a1.isInfinite || a2.isInfinite { return false }
+        if abs(a2) >= 0.9999 { return false }
+        if 1.0 + a1 + a2 <= 0.0001 { return false }
+        if 1.0 - a1 + a2 <= 0.0001 { return false }
+        return true
     }
 
     /// Evaluates the analytical magnitude response in decibels (dB) at a target frequency.

@@ -1,7 +1,9 @@
 import Foundation
 import DynaQCore
 
-/// Detects signal envelope and dynamically modulates band gain.
+/// Professional Dynamic Equalizer Envelope Detection and Gain Modulation Engine.
+/// Detects sidechain signal energy and applies precision upward/downward dynamic gain offsets
+/// with smooth ballistic smoothing, anti-denormal protection, and NaN containment.
 public final class DynamicEQProcessor: @unchecked Sendable {
     private var envelope: Float = 0.0
     private var currentGainOffset: Float = 0.0
@@ -23,19 +25,21 @@ public final class DynamicEQProcessor: @unchecked Sendable {
         sampleRate: Float,
         band: EQBand
     ) -> Float {
-        guard band.isDynamic, band.isEnabled else {
+        guard band.isDynamic, band.isEnabled, count > 0, sampleRate > 0 else {
             currentDynamicGainReduction = 0.0
             return 0.0
         }
 
-        // Calculate peak level in this block
+        // Fast peak search
         var peak: Float = 0.0
         for i in 0..<count {
-            let absVal = abs(samples[i])
-            if absVal > peak { peak = absVal }
+            let v = abs(samples[i])
+            if v > peak && !v.isNaN && !v.isInfinite {
+                peak = v
+            }
         }
 
-        // Attack/Release time constants
+        // Ballistics time constants
         let attackSec = max(band.attackMs * 0.001, 0.0005)
         let releaseSec = max(band.releaseMs * 0.001, 0.005)
         let blockTimeSec = Float(count) / sampleRate
@@ -43,11 +47,15 @@ public final class DynamicEQProcessor: @unchecked Sendable {
         let attackCoeff = 1.0 - exp(-blockTimeSec / attackSec)
         let releaseCoeff = 1.0 - exp(-blockTimeSec / releaseSec)
 
-        // Envelope detection
+        // Envelope detection with denormal guard
         if peak > envelope {
             envelope += (peak - envelope) * attackCoeff
         } else {
             envelope += (peak - envelope) * releaseCoeff
+        }
+
+        if envelope.isNaN || envelope.isInfinite || abs(envelope) < 1e-15 {
+            envelope = 0.0
         }
 
         // Convert envelope to dBFS
@@ -61,7 +69,7 @@ public final class DynamicEQProcessor: @unchecked Sendable {
 
             // Dynamic range clamp
             if band.dynamicRange < 0 {
-                // Downward compression (e.g. de-essing, taming boominess)
+                // Downward compression (de-essing, controlling resonant peaks)
                 targetDelta = -min(rawCompression, abs(band.dynamicRange))
             } else {
                 // Upward expansion
@@ -69,10 +77,13 @@ public final class DynamicEQProcessor: @unchecked Sendable {
             }
         }
 
-        // Smooth gain offset
+        // Low-pass smoothing on gain offset
         currentGainOffset += (targetDelta - currentGainOffset) * 0.2
-        currentDynamicGainReduction = currentGainOffset
+        if currentGainOffset.isNaN || currentGainOffset.isInfinite {
+            currentGainOffset = 0.0
+        }
 
+        currentDynamicGainReduction = currentGainOffset
         return currentGainOffset
     }
 }

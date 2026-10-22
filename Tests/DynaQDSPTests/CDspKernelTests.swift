@@ -2,6 +2,8 @@ import XCTest
 import CDspKernel
 @testable import DynaQCore
 @testable import DynaQDSP
+@testable import DynaQDynamics
+@testable import DynaQAnalysis
 @testable import DynaQAudioDriver
 
 final class CDspKernelTests: XCTestCase {
@@ -252,5 +254,56 @@ final class CDspKernelTests: XCTestCase {
             XCTAssertFalse(validR[i].isNaN)
             XCTAssertFalse(validR[i].isInfinite)
         }
+    }
+
+    func testBiquadStabilityJuryCheck() {
+        // Stable filter (|a2| < 1, 1 + a1 + a2 > 0, 1 - a1 + a2 > 0)
+        let stableCoeffs = c_biquad_coeffs_t(b0: 1.0, b1: 0.0, b2: 0.0, a1: -1.2, a2: 0.5)
+        XCTAssertTrue(c_biquad_is_stable(stableCoeffs))
+
+        // Unstable filter (|a2| >= 1.0)
+        let unstableCoeffs1 = c_biquad_coeffs_t(b0: 1.0, b1: 0.0, b2: 0.0, a1: -1.2, a2: 1.05)
+        XCTAssertFalse(c_biquad_is_stable(unstableCoeffs1))
+
+        // Unstable filter (poles on real axis outside unit circle)
+        let unstableCoeffs2 = c_biquad_coeffs_t(b0: 1.0, b1: 0.0, b2: 0.0, a1: 2.5, a2: 0.5)
+        XCTAssertFalse(c_biquad_is_stable(unstableCoeffs2))
+
+        // Safe setter rejects unstable biquad
+        var eq = c_eq_engine_t()
+        c_eq_engine_init(&eq)
+        let status = c_eq_engine_set_band_safe(&eq, 0, unstableCoeffs1, 0, true, true)
+        XCTAssertEqual(status, C_DSP_ERR_UNSTABLE_FILTER)
+    }
+
+    func testLookaheadLimiterCInterface() {
+        guard let lim = c_lookahead_limiter_create(32, 48000.0, 0.9) else {
+            XCTFail("Failed to allocate lookahead limiter")
+            return
+        }
+        defer { c_lookahead_limiter_destroy(lim) }
+
+        var left = [Float](repeating: 2.5, count: 64)
+        var right = [Float](repeating: 2.5, count: 64)
+
+        c_lookahead_limiter_process(lim, &left, &right, 64)
+
+        for i in 32..<64 {
+            XCTAssertLessThanOrEqual(left[i], 0.901, "Left sample should be clamped to 0.9 ceiling")
+            XCTAssertLessThanOrEqual(right[i], 0.901, "Right sample should be clamped to 0.9 ceiling")
+        }
+    }
+
+    func testPhaseCorrelationCInterface() {
+        let count = 128
+        let monoL = (0..<count).map { sin(Float($0) * 0.05) }
+        let monoR = monoL
+
+        let corrInPhase = c_dsp_measure_phase_correlation(monoL, monoR, count)
+        XCTAssertEqual(corrInPhase, 1.0, accuracy: 1e-4)
+
+        let outOfPhaseR = monoL.map { -$0 }
+        let corrOutOfPhase = c_dsp_measure_phase_correlation(monoL, outOfPhaseR, count)
+        XCTAssertEqual(corrOutOfPhase, -1.0, accuracy: 1e-4)
     }
 }
