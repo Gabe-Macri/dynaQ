@@ -107,7 +107,7 @@ public final class ClientDSPPipeline: AudioProcessingClient, @unchecked Sendable
         stopTelemetryTimer()
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            self.telemetryTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+            let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
                 guard let self = self else { return }
 
                 // Drain pending frames from lock-free visualizer ring buffer onto worker buffers
@@ -148,6 +148,8 @@ public final class ClientDSPPipeline: AudioProcessingClient, @unchecked Sendable
                 self.onMeterUpdate?(meter)
                 self.onSpectrumUpdate?(spectrum)
             }
+            RunLoop.main.add(timer, forMode: .common)
+            self.telemetryTimer = timer
         }
     }
 

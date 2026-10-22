@@ -177,7 +177,7 @@ public struct MasterSectionView: View {
                     tintColor: DynaQTheme.phosphorGreen
                 )
             }
-            .frame(width: 72)
+            .frame(width: 84)
 
             Rectangle()
                 .fill(DynaQTheme.surfaceBorder)

@@ -2,8 +2,9 @@ import SwiftUI
 import DynaQCore
 import DynaQDSP
 
-/// High-performance Studio Parametric EQ Curve with real-time discrete RTA spectrum analyzer and draggable terminal reticle nodes.
-/// Optimized for 60fps rendering with precalculated curve caching and zero allocations during audio playback.
+/// High-performance Studio Parametric EQ Curve with zero-allocation discrete RTA spectrum analyzer,
+/// Frequency Modulation (FM) visual sweep zones, and draggable precision terminal reticle nodes.
+/// Tuned for 120fps display refresh with cached vector paths and direct Canvas rendering.
 public struct EQCurveView: View {
     @Binding public var profile: EQProfile
     @Binding public var selectedBandID: UUID?
@@ -28,6 +29,7 @@ public struct EQCurveView: View {
 
     @State private var cachedPath: Path = Path()
     @State private var lastViewSize: CGSize = .zero
+    @State private var isDraggingNode: Bool = false
 
     public init(
         profile: Binding<EQProfile>,
@@ -50,20 +52,34 @@ public struct EQCurveView: View {
                     drawOctaveHeader(context: context, size: size)
                 }
 
-                // 2. Real-time Discrete RTA Spectrum Analyzer Bars (Hardware Test Instrument Style)
+                // 2. Real-time Discrete RTA Spectrum Analyzer Bars (Zero-Allocation Canvas)
                 if !spectrumDB.isEmpty {
-                    TerminalSpectrumBars(spectrumDB: spectrumDB)
-                        .padding(.bottom, 22) // Leave room for bottom frequency axis
+                    TerminalSpectrumCanvas(spectrumDB: spectrumDB)
+                        .padding(.bottom, 22)
                 }
 
-                // 3. Composite EQ Response Curve (Cached Path, Zero Math on Telemetry Ticks)
+                // 3. FM Modulation Sweep Bands (Visualizes active Frequency Modulation zones)
+                ForEach(profile.bands.indices, id: \.self) { index in
+                    let band = profile.bands[index]
+                    if band.isFMEnabled && band.isEnabled {
+                        let color = DynaQTheme.bandColors[index % DynaQTheme.bandColors.count]
+                        FMSweepBandOverlay(
+                            band: band,
+                            color: color,
+                            size: geo.size,
+                            xForFreq: { xFor(frequency: $0, width: geo.size.width) }
+                        )
+                    }
+                }
+
+                // 4. Composite EQ Response Curve
                 cachedPath
                     .stroke(
                         profile.isBypassed ? DynaQTheme.textMuted : DynaQTheme.phosphorGreen,
                         style: StrokeStyle(lineWidth: 1.5, lineCap: .square, lineJoin: .miter)
                     )
 
-                // 4. Interactive Draggable Reticle Nodes
+                // 5. Interactive Draggable Reticle Nodes
                 ForEach(profile.bands.indices, id: \.self) { index in
                     let band = profile.bands[index]
                     let isSelected = (selectedBandID == band.id)
@@ -75,8 +91,15 @@ public struct EQCurveView: View {
                         color: bandColor,
                         isSelected: isSelected,
                         position: pt,
+                        onDragStart: {
+                            isDraggingNode = true
+                        },
                         onDrag: { newPoint in
                             updateBand(at: index, with: newPoint, size: geo.size)
+                            rebuildCachedPath(size: geo.size)
+                        },
+                        onDragEnd: {
+                            isDraggingNode = false
                             rebuildCachedPath(size: geo.size)
                         },
                         onSelect: {
@@ -98,7 +121,9 @@ public struct EQCurveView: View {
                 rebuildCachedPath(size: newSize)
             }
             .onChange(of: profile) { _, _ in
-                rebuildCachedPath(size: lastViewSize)
+                if !isDraggingNode {
+                    rebuildCachedPath(size: lastViewSize)
+                }
             }
         }
     }
@@ -151,9 +176,11 @@ public struct EQCurveView: View {
     private func rebuildCachedPath(size: CGSize) {
         guard size.width > 10, size.height > 10 else { return }
 
-        let activeBands = profile.bands.filter { $0.isEnabled }
+        let anySolo = profile.bands.contains { $0.isSolo }
+        let activeBands = profile.bands.filter { b in
+            anySolo ? (b.isSolo && b.isEnabled) : b.isEnabled
+        }
 
-        // Compute filter coefficients ONCE per active band (8 calculations instead of 1128!)
         let activeCoeffs = activeBands.map { band in
             BiquadCoefficients.calculate(
                 type: band.filterType,
@@ -214,7 +241,6 @@ public struct EQCurveView: View {
     }
 
     private func drawGrid(context: GraphicsContext, size: CGSize) {
-        // Frequency lines (vertical)
         let gridFrequencies: [Float] = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000]
         for f in gridFrequencies {
             let x = xFor(frequency: f, width: size.width)
@@ -232,7 +258,6 @@ public struct EQCurveView: View {
             )
         }
 
-        // Decibel lines (horizontal)
         let gridDBs: [Float] = [18, 12, 6, 0, -6, -12, -18]
         for db in gridDBs {
             let y = yFor(gainDB: db, height: size.height)
@@ -257,32 +282,57 @@ public struct EQCurveView: View {
     }
 }
 
-// MARK: - Discrete RTA Spectrum Bars (Hardware Test Instrument Aesthetic)
+// MARK: - Zero-Allocation Canvas RTA Spectrum Bars
 
-private struct TerminalSpectrumBars: View {
+private struct TerminalSpectrumCanvas: View {
     let spectrumDB: [Float]
 
     var body: some View {
-        GeometryReader { geo in
+        Canvas { context, size in
             let barCount = spectrumDB.count
+            guard barCount > 0 else { return }
             let spacing: CGFloat = 1.0
-            let totalSpacing = spacing * CGFloat(max(barCount - 1, 0))
-            let barWidth = max((geo.size.width - totalSpacing) / CGFloat(barCount), 1.0)
+            let totalSpacing = spacing * CGFloat(barCount - 1)
+            let barWidth = max((size.width - totalSpacing) / CGFloat(barCount), 1.0)
 
-            HStack(alignment: .bottom, spacing: spacing) {
-                ForEach(0..<barCount, id: \.self) { i in
-                    let db = spectrumDB[i]
-                    // Map -80 dB ... 0 dB to 0 ... 1
-                    let norm = CGFloat(min(max((db + 80.0) / 80.0, 0.0), 1.0))
-                    let barH = max(geo.size.height * norm, 1.0)
-
-                    Rectangle()
-                        .fill(DynaQTheme.phosphorGreen.opacity(0.32))
-                        .frame(width: barWidth, height: barH)
-                }
+            for i in 0..<barCount {
+                let db = spectrumDB[i]
+                let norm = CGFloat(min(max((db + 80.0) / 80.0, 0.0), 1.0))
+                let barH = max(size.height * norm, 1.0)
+                let x = CGFloat(i) * (barWidth + spacing)
+                let y = size.height - barH
+                let rect = CGRect(x: x, y: y, width: barWidth, height: barH)
+                context.fill(Path(rect), with: .color(DynaQTheme.phosphorGreen.opacity(0.32)))
             }
-            .frame(maxHeight: .infinity, alignment: .bottom)
         }
+    }
+}
+
+// MARK: - Frequency Modulation (FM) Sweep Visualizer
+
+private struct FMSweepBandOverlay: View {
+    let band: EQBand
+    let color: Color
+    let size: CGSize
+    let xForFreq: (Float) -> CGFloat
+
+    var body: some View {
+        let fLow = band.frequency * pow(2.0, -abs(band.fmDepth))
+        let fHigh = band.frequency * pow(2.0, abs(band.fmDepth))
+        let x1 = xForFreq(max(fLow, 20.0))
+        let x2 = xForFreq(min(fHigh, 20000.0))
+        let width = max(x2 - x1, 4.0)
+
+        Rectangle()
+            .fill(color.opacity(0.08))
+            .frame(width: width, height: size.height)
+            .position(x: x1 + width / 2.0, y: size.height / 2.0)
+            .overlay(
+                Rectangle()
+                    .stroke(color.opacity(0.25), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                    .frame(width: width, height: size.height)
+                    .position(x: x1 + width / 2.0, y: size.height / 2.0)
+            )
     }
 }
 
@@ -293,7 +343,9 @@ private struct TerminalBandNode: View {
     let color: Color
     let isSelected: Bool
     let position: CGPoint
+    let onDragStart: () -> Void
     let onDrag: (CGPoint) -> Void
+    let onDragEnd: () -> Void
     let onSelect: () -> Void
 
     @State private var isDragging: Bool = false
@@ -306,9 +358,16 @@ private struct TerminalBandNode: View {
                     Text("[ BAND \(String(format: "%02d", band.index + 1)) // \(band.formattedFrequency) // \(band.formattedGain) ]")
                         .font(.system(size: 9, weight: .bold, design: .monospaced))
                         .foregroundColor(DynaQTheme.textPrimary)
-                    Text("\(band.filterType.shortName) | \(band.routing.shortBadge) | Q:\(String(format: "%.2f", band.q))")
-                        .font(.system(size: 8, weight: .bold, design: .monospaced))
-                        .foregroundColor(color)
+                    HStack(spacing: 4) {
+                        Text("\(band.filterType.shortName) | \(band.routing.shortBadge) | Q:\(String(format: "%.2f", band.q))")
+                            .font(.system(size: 8, weight: .bold, design: .monospaced))
+                            .foregroundColor(color)
+                        if band.isFMEnabled {
+                            Text("| FM:\(band.fmMode.shortBadge) \(String(format: "%+.1f", band.fmDepth))Oct")
+                                .font(.system(size: 8, weight: .bold, design: .monospaced))
+                                .foregroundColor(DynaQTheme.terminalCyan)
+                        }
+                    }
                 }
                 .padding(.horizontal, 6)
                 .padding(.vertical, 3)
@@ -316,7 +375,7 @@ private struct TerminalBandNode: View {
                 .overlay(
                     Rectangle().stroke(color, lineWidth: 1)
                 )
-                .offset(y: -32)
+                .offset(y: -34)
             }
 
             // Crosshair tick lines when selected
@@ -344,12 +403,16 @@ private struct TerminalBandNode: View {
         .gesture(
             DragGesture(minimumDistance: 1)
                 .onChanged { gesture in
-                    isDragging = true
+                    if !isDragging {
+                        isDragging = true
+                        onDragStart()
+                    }
                     onSelect()
                     onDrag(gesture.location)
                 }
                 .onEnded { _ in
                     isDragging = false
+                    onDragEnd()
                 }
         )
         .onTapGesture {

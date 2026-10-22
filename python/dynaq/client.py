@@ -132,8 +132,11 @@ class DynaQClient:
         q: float = 1.414,
         filter_type: str = "Bell",
         is_enabled: bool = True,
+        is_fm_enabled: bool = False,
+        fm_depth: float = 0.5,
+        fm_rate: float = 1.0,
     ) -> bool:
-        """Modifies a parametric EQ band in real time."""
+        """Modifies a parametric EQ band and Frequency Modulation parameters in real time."""
         resp = self.send_command(
             "set_band",
             index=index,
@@ -142,6 +145,9 @@ class DynaQClient:
             q=q,
             filter_type=filter_type,
             is_enabled=is_enabled,
+            is_fm_enabled=is_fm_enabled,
+            fm_depth=fm_depth,
+            fm_rate=fm_rate,
         )
         return resp.get("status") == "ok"
 
