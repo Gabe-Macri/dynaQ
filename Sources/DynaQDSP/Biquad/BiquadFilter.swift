@@ -56,9 +56,12 @@ public final class BiquadFilter: @unchecked Sendable {
             buffer[i] = y
         }
 
-        // Anti-denormal flushing
-        if abs(state1) < 1e-15 { state1 = 0.0 }
-        if abs(state2) < 1e-15 { state2 = 0.0 }
+        // Anti-denormal and NaN/Infinity containment
+        if state1.isNaN || state1.isInfinite { state1 = 0.0 }
+        else if abs(state1) < 1e-15 { state1 = 0.0 }
+
+        if state2.isNaN || state2.isInfinite { state2 = 0.0 }
+        else if abs(state2) < 1e-15 { state2 = 0.0 }
 
         if channel == 0 {
             s1.0 = state1

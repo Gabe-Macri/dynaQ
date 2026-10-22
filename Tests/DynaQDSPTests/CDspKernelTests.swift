@@ -175,4 +175,82 @@ final class CDspKernelTests: XCTestCase {
         router.client = pipeline
         XCTAssertNotNil(router.client)
     }
+
+    func testLimiterStereoLinkedGainPreservation() {
+        let count = 128
+        // Left channel has a hot peak, right channel has a lower signal
+        var left = [Float](repeating: 2.0, count: count)
+        var right = [Float](repeating: 0.5, count: count)
+
+        let linearCeiling: Float = 0.95
+        c_dsp_limiter_process_stereo(&left, &right, count, linearCeiling, true)
+
+        for i in 0..<count {
+            // Left must not exceed ceiling
+            XCTAssertLessThanOrEqual(left[i], linearCeiling + 0.001)
+            // Stereo relationship (left is 4x right) must be strictly maintained to preserve spatial image
+            let ratio = left[i] / right[i]
+            XCTAssertEqual(ratio, 4.0, accuracy: 1e-4, "Stereo link must preserve channel balance across limiting.")
+        }
+    }
+
+    func testRingBufferUnderrunBehavior() {
+        let capacity = 256
+        guard let rb = c_ringbuffer_create(capacity) else {
+            XCTFail("Failed to allocate ring buffer")
+            return
+        }
+        defer { c_ringbuffer_destroy(rb) }
+
+        // Write 32 frames
+        let inputL = [Float](repeating: 0.77, count: 32)
+        let inputR = [Float](repeating: 0.88, count: 32)
+        let written = c_ringbuffer_write_stereo(rb, inputL, inputR, 32)
+        XCTAssertEqual(written, 32)
+
+        // Attempt to read 64 frames (underrun situation)
+        var readL = [Float](repeating: -1.0, count: 64)
+        var readR = [Float](repeating: -1.0, count: 64)
+        let readCount = c_ringbuffer_read_stereo(rb, &readL, &readR, 64)
+
+        // Must return only available 32 frames without crashing or corrupting
+        XCTAssertEqual(readCount, 32)
+        XCTAssertEqual(c_ringbuffer_available_read(rb), 0)
+
+        for i in 0..<32 {
+            XCTAssertEqual(readL[i], 0.77, accuracy: 1e-6)
+            XCTAssertEqual(readR[i], 0.88, accuracy: 1e-6)
+        }
+    }
+
+    func testBiquadFilterDenormalAndNaNProtection() {
+        var eq = c_eq_engine_t()
+        c_eq_engine_init(&eq)
+
+        let coeffs = c_biquad_coeffs_t(b0: 1.0, b1: -1.8, b2: 0.81, a1: -1.8, a2: 0.81)
+        c_eq_engine_set_band(&eq, 0, coeffs, 0, true, true)
+
+        // Feed NaN samples
+        var left = [Float](repeating: Float.nan, count: 64)
+        var right = [Float](repeating: Float.nan, count: 64)
+        c_eq_engine_process_stereo(&eq, &left, &right, 64)
+
+        // The filter must not blow up into infinity
+        for i in 0..<64 {
+            XCTAssertFalse(left[i].isInfinite)
+            XCTAssertFalse(right[i].isInfinite)
+        }
+
+        // Subsequent audio must recover cleanly
+        var validL = (0..<64).map { sin(Float($0) * 0.1) }
+        var validR = (0..<64).map { cos(Float($0) * 0.1) }
+        c_eq_engine_process_stereo(&eq, &validL, &validR, 64)
+
+        for i in 0..<64 {
+            XCTAssertFalse(validL[i].isNaN)
+            XCTAssertFalse(validL[i].isInfinite)
+            XCTAssertFalse(validR[i].isNaN)
+            XCTAssertFalse(validR[i].isInfinite)
+        }
+    }
 }

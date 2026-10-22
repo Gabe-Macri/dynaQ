@@ -10,6 +10,20 @@ public enum ComparisonSlot: String, CaseIterable, Sendable {
     case slotB = "B"
 }
 
+/// Monospace Diagnostic Log Entry for live engine and hardware telemetry.
+public struct DiagnosticLog: Identifiable, Sendable {
+    public let id = UUID()
+    public let timestamp: String
+    public let level: String // "INFO", "WARN", "ERR", "DSP"
+    public let message: String
+
+    public init(timestamp: String, level: String, message: String) {
+        self.timestamp = timestamp
+        self.level = level
+        self.message = message
+    }
+}
+
 /// Global Application State coordinating DSP Engine, UI, and System Audio I/O.
 @MainActor
 public final class AppState: ObservableObject {
@@ -41,6 +55,7 @@ public final class AppState: ObservableObject {
     @Published public var devices: [AudioDevice] = []
     @Published public var availableAudioApps: [AudioAppProcess] = []
     @Published public var selectedAudioApp: AudioAppProcess? = nil
+    @Published public var tapAllProcesses: Bool = true
 
     @Published public var selectedInputDevice: AudioDevice?
     @Published public var selectedOutputDevice: AudioDevice?
@@ -49,8 +64,14 @@ public final class AppState: ObservableObject {
     @Published public var feedbackProtection: Bool = true {
         didSet {
             engineManager.feedbackProtectionEnabled = feedbackProtection
+            logDiagnostic(level: "INFO", message: "Feedback protection \(feedbackProtection ? "ENABLED" : "DISABLED")")
         }
     }
+
+    // Modal & Error Handling States
+    @Published public var showSettingsModal: Bool = false
+    @Published public var activeErrorMessage: String? = nil
+    @Published public var diagnosticLogs: [DiagnosticLog] = []
 
     // Per-App Routing
     @Published public var appRoutes: [AppAudioRoute] = []
@@ -62,6 +83,10 @@ public final class AppState: ObservableObject {
     // Engine status
     @Published public var isEngineOnline: Bool = false
     @Published public var statusMessage: String = "Initializing..."
+
+    public var underrunCount: Int {
+        engineManager.underrunCount
+    }
 
     private let engineManager = AudioEngineManager.shared
     private let coreAudioManager = CoreAudioManager.shared
@@ -97,6 +122,27 @@ public final class AppState: ObservableObject {
         startLiveSystemAudio()
     }
 
+    public func logDiagnostic(level: String, message: String) {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        let ts = formatter.string(from: Date())
+        let entry = DiagnosticLog(timestamp: ts, level: level, message: message)
+        DispatchQueue.main.async {
+            self.diagnosticLogs.append(entry)
+            if self.diagnosticLogs.count > 120 {
+                self.diagnosticLogs.removeFirst(self.diagnosticLogs.count - 120)
+            }
+        }
+    }
+
+    public func clearDiagnosticLogs() {
+        diagnosticLogs.removeAll()
+    }
+
+    public func dismissError() {
+        activeErrorMessage = nil
+    }
+
     private func setupAudioEngineBindings() {
         dspPipeline.onMeterUpdate = { [weak self] meter in
             self?.currentMeter = meter
@@ -110,9 +156,34 @@ public final class AppState: ObservableObject {
             self?.roundtripLatencyMs = lat
         }
 
+        engineManager.onError = { [weak self] err in
+            DispatchQueue.main.async {
+                self?.activeErrorMessage = err.localizedDescription
+                self?.logDiagnostic(level: "ERR", message: err.localizedDescription)
+            }
+        }
+
         coreAudioManager.onDevicesChanged = { [weak self] devs in
             DispatchQueue.main.async {
-                self?.devices = devs
+                guard let self = self else { return }
+                self.devices = devs
+                self.logDiagnostic(level: "INFO", message: "Audio devices updated (\(devs.count) devices found)")
+
+                // Auto-fallback if active output was unplugged
+                if let currentOut = self.selectedOutputDevice, !devs.contains(where: { $0.id == currentOut.id }) {
+                    self.logDiagnostic(level: "WARN", message: "Output device #\(currentOut.id) disconnected. Falling back to default output...")
+                    let defOutID = self.coreAudioManager.getDefaultOutputDeviceID()
+                    if let defDev = devs.first(where: { $0.id == defOutID }) {
+                        self.selectedOutputDevice = defDev
+                        do {
+                            try self.engineManager.switchOutputDevice(id: defDev.id)
+                            self.activeErrorMessage = nil
+                        } catch {
+                            self.activeErrorMessage = "Auto-recovery failed: \(error.localizedDescription)"
+                            self.logDiagnostic(level: "ERR", message: "Recovery output switch failed: \(error.localizedDescription)")
+                        }
+                    }
+                }
             }
         }
 
@@ -121,7 +192,14 @@ public final class AppState: ObservableObject {
                 guard let self = self, let d = dev else { return }
                 if self.selectedOutputDevice == nil || self.selectedOutputDevice?.id != d.id {
                     self.selectedOutputDevice = d
-                    try? self.engineManager.switchOutputDevice(id: d.id)
+                    self.logDiagnostic(level: "INFO", message: "Default output changed to \(d.name) (#\(d.id))")
+                    do {
+                        try self.engineManager.switchOutputDevice(id: d.id)
+                        self.activeErrorMessage = nil
+                    } catch {
+                        self.activeErrorMessage = "Switch to \(d.name) failed: \(error.localizedDescription)"
+                        self.logDiagnostic(level: "ERR", message: "Switch to \(d.name) failed: \(error.localizedDescription)")
+                    }
                 }
             }
         }
@@ -131,6 +209,7 @@ public final class AppState: ObservableObject {
                 guard let self = self, let d = dev else { return }
                 if self.selectedInputDevice == nil || self.selectedInputDevice?.id != d.id {
                     self.selectedInputDevice = d
+                    self.logDiagnostic(level: "INFO", message: "Default input changed to \(d.name) (#\(d.id))")
                     try? self.engineManager.switchInputDevice(id: d.id)
                 }
             }
@@ -143,14 +222,14 @@ public final class AppState: ObservableObject {
         let defInID = coreAudioManager.getDefaultInputDeviceID()
         self.selectedOutputDevice = devices.first(where: { $0.id == defOutID })
         self.selectedInputDevice = devices.first(where: { $0.id == defInID })
+        logDiagnostic(level: "INFO", message: "Hardware devices refreshed (default out: #\(defOutID), default in: #\(defInID))")
     }
 
     public func refreshAudioApps() {
         if #available(macOS 14.2, *) {
             let apps = SystemAudioTap.shared.fetchAudioProcesses()
             self.availableAudioApps = apps
-            if selectedAudioApp == nil {
-                // Auto-pick Apple Music or Spotify or active player
+            if selectedAudioApp == nil && !tapAllProcesses {
                 let musicApp = apps.first(where: { $0.bundleID.lowercased().contains("music") })
                 let spotifyApp = apps.first(where: { $0.bundleID.lowercased().contains("spotify") })
                 self.selectedAudioApp = musicApp ?? spotifyApp ?? apps.first
@@ -159,10 +238,46 @@ public final class AppState: ObservableObject {
     }
 
     public func selectAudioApp(_ app: AudioAppProcess) {
+        self.tapAllProcesses = false
         self.selectedAudioApp = app
         engineManager.selectedTargetProcessID = app.id
-        try? engineManager.start(captureSource: captureSource, inputDeviceID: selectedInputDevice?.id, outputDeviceID: selectedOutputDevice?.id)
-        statusMessage = "Routing: \(app.name)"
+        logDiagnostic(level: "INFO", message: "Target audio process set to: \(app.name) (PID \(app.id))")
+        do {
+            try engineManager.start(captureSource: captureSource, inputDeviceID: selectedInputDevice?.id, outputDeviceID: selectedOutputDevice?.id)
+            statusMessage = "Routing: \(app.name)"
+            activeErrorMessage = nil
+        } catch {
+            activeErrorMessage = "Process tap failed: \(error.localizedDescription)"
+            logDiagnostic(level: "ERR", message: "Process tap failed: \(error.localizedDescription)")
+        }
+    }
+
+    public func setTapAllProcesses(_ enable: Bool) {
+        self.tapAllProcesses = enable
+        if enable {
+            self.selectedAudioApp = nil
+            engineManager.selectedTargetProcessID = nil
+            logDiagnostic(level: "INFO", message: "Capture mode set to: ALL SYSTEM AUDIO")
+        }
+        do {
+            try engineManager.start(captureSource: captureSource, inputDeviceID: selectedInputDevice?.id, outputDeviceID: selectedOutputDevice?.id)
+            statusMessage = enable ? "Equalizing: All System Audio" : "Equalizing: Single Process"
+            activeErrorMessage = nil
+        } catch {
+            activeErrorMessage = "Capture configuration failed: \(error.localizedDescription)"
+            logDiagnostic(level: "ERR", message: "Capture configuration failed: \(error.localizedDescription)")
+        }
+    }
+
+    public func resetAudioEngine() {
+        logDiagnostic(level: "INFO", message: "User requested audio engine and ring buffer reset...")
+        stopLiveSystemAudio()
+        engineManager.resetUnderrunCount()
+        refreshHardwareDevices()
+        refreshAudioApps()
+        activeErrorMessage = nil
+        startLiveSystemAudio()
+        logDiagnostic(level: "INFO", message: "Audio engine reset completed successfully.")
     }
 
     public func startLiveSystemAudio() {
@@ -171,16 +286,20 @@ public final class AppState: ObservableObject {
             dspPipeline.setProfile(currentProfile)
             dspPipeline.startTelemetryTimer()
             engineManager.client = dspPipeline
-            engineManager.selectedTargetProcessID = selectedAudioApp?.id
+            engineManager.selectedTargetProcessID = tapAllProcesses ? nil : selectedAudioApp?.id
             let inID = selectedInputDevice?.id ?? coreAudioManager.getDefaultInputDeviceID()
             let outID = selectedOutputDevice?.id ?? coreAudioManager.getDefaultOutputDeviceID()
             try engineManager.start(captureSource: captureSource, inputDeviceID: inID, outputDeviceID: outID)
             isEngineOnline = true
-            let appName = selectedAudioApp?.name ?? "System Audio"
+            let appName = tapAllProcesses ? "All System Audio" : (selectedAudioApp?.name ?? "System Audio")
             statusMessage = captureSource == .systemAudio ? "Equalizing: \(appName)" : "Hardware Mic Active"
+            activeErrorMessage = nil
+            logDiagnostic(level: "INFO", message: "Audio engine online: \(statusMessage) -> Output #\(outID)")
         } catch {
             isEngineOnline = false
+            activeErrorMessage = error.localizedDescription
             statusMessage = "Audio I/O Error: \(error.localizedDescription)"
+            logDiagnostic(level: "ERR", message: "Audio startup failed: \(error.localizedDescription)")
         }
     }
 
@@ -201,23 +320,66 @@ public final class AppState: ObservableObject {
 
     public func setCaptureSource(_ source: AudioCaptureSource) {
         self.captureSource = source
-        try? engineManager.setCaptureSource(source)
+        do {
+            try engineManager.setCaptureSource(source)
+            activeErrorMessage = nil
+            logDiagnostic(level: "INFO", message: "Capture source set to \(source.rawValue)")
+        } catch {
+            activeErrorMessage = "Failed to set capture source: \(error.localizedDescription)"
+            logDiagnostic(level: "ERR", message: "Failed to set capture source: \(error.localizedDescription)")
+        }
     }
 
     public func setInputDevice(_ device: AudioDevice) {
         self.selectedInputDevice = device
-        try? engineManager.switchInputDevice(id: device.id)
+        do {
+            try engineManager.switchInputDevice(id: device.id)
+            activeErrorMessage = nil
+            logDiagnostic(level: "INFO", message: "Input device set to \(device.name) (#\(device.id))")
+        } catch {
+            activeErrorMessage = "Failed to switch input: \(error.localizedDescription)"
+            logDiagnostic(level: "ERR", message: "Failed to switch input: \(error.localizedDescription)")
+        }
     }
 
     public func setOutputDevice(_ device: AudioDevice) {
         self.selectedOutputDevice = device
         dspPipeline.eqEngine.setSampleRate(Float(device.currentSampleRate))
-        try? engineManager.switchOutputDevice(id: device.id)
+        do {
+            try engineManager.switchOutputDevice(id: device.id)
+            activeErrorMessage = nil
+            logDiagnostic(level: "INFO", message: "Output device set to \(device.name) (#\(device.id))")
+        } catch {
+            activeErrorMessage = "Failed to switch output: \(error.localizedDescription)"
+            logDiagnostic(level: "ERR", message: "Failed to switch output: \(error.localizedDescription)")
+        }
     }
 
     public func setBufferSize(_ size: UInt32) {
         self.selectedBufferSize = size
         engineManager.setBufferFrameSize(size)
+        logDiagnostic(level: "INFO", message: "Buffer size set to \(size) frames")
+    }
+
+    public func setLimiterCeiling(_ ceilingDB: Float) {
+        var prof = currentProfile
+        prof.limiterCeiling = ceilingDB
+        currentProfile = prof
+        logDiagnostic(level: "DSP", message: "Limiter ceiling set to \(String(format: "%.1f", ceilingDB)) dBFS")
+    }
+
+    public func toggleLimiter() {
+        var prof = currentProfile
+        prof.isLimiterEnabled.toggle()
+        currentProfile = prof
+        logDiagnostic(level: "DSP", message: "Limiter \(prof.isLimiterEnabled ? "ENABLED" : "BYPASSED")")
+    }
+
+    public func toggleMasterBypass() {
+        var prof = currentProfile
+        prof.isBypassed.toggle()
+        currentProfile = prof
+        logDiagnostic(level: "DSP", message: "DSP processing \(prof.isBypassed ? "BYPASSED" : "ACTIVE")")
     }
 
     // MARK: - A / B Comparison

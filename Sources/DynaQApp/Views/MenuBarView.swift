@@ -89,10 +89,34 @@ public struct MenuBarView: View {
 
             Rectangle().fill(DynaQTheme.surfaceBorder).frame(height: 1)
 
+            // Active Error Warning Banner if routing failed
+            if let errorMsg = state.activeErrorMessage {
+                HStack(spacing: 4) {
+                    Text("ERR: \(errorMsg.uppercased())")
+                        .font(.system(size: 7, weight: .bold, design: .monospaced))
+                        .foregroundColor(DynaQTheme.terminalRed)
+                        .lineLimit(1)
+                    Spacer()
+                    Button("[RESET]") {
+                        state.resetAudioEngine()
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 7, weight: .bold, design: .monospaced))
+                    .foregroundColor(DynaQTheme.terminalRed)
+                }
+                .padding(4)
+                .background(DynaQTheme.terminalRed.opacity(0.12))
+                .overlay(
+                    Rectangle().stroke(DynaQTheme.terminalRed.opacity(0.5), lineWidth: 1)
+                )
+
+                Rectangle().fill(DynaQTheme.surfaceBorder).frame(height: 1)
+            }
+
             // Actions
-            HStack {
+            HStack(spacing: 6) {
                 Button(action: onOpenMainWindow) {
-                    Text("[ OPEN STUDIO UI ]")
+                    Text("[ STUDIO ]")
                         .font(.system(size: 8, weight: .bold, design: .monospaced))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 4)
@@ -100,6 +124,22 @@ public struct MenuBarView: View {
                         .foregroundColor(DynaQTheme.terminalCyan)
                         .overlay(
                             Rectangle().stroke(DynaQTheme.terminalCyan, lineWidth: 1)
+                        )
+                }
+                .buttonStyle(.plain)
+
+                Button(action: {
+                    state.showSettingsModal = true
+                    onOpenMainWindow()
+                }) {
+                    Text("[ CONFIG ]")
+                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 4)
+                        .background(DynaQTheme.surfaceElevated)
+                        .foregroundColor(DynaQTheme.textSecondary)
+                        .overlay(
+                            Rectangle().stroke(DynaQTheme.surfaceBorder, lineWidth: 1)
                         )
                 }
                 .buttonStyle(.plain)

@@ -42,6 +42,33 @@ public enum AudioCaptureSource: String, CaseIterable, Sendable {
     case hardwareInput = "Hardware Microphone / Interface"
 }
 
+/// Comprehensive, actionable error descriptions for audio routing failures.
+public enum AudioRouterError: LocalizedError, Equatable {
+    case systemTapUnavailable(String)
+    case processNotFound(String)
+    case deviceNotFound(AudioDeviceID)
+    case ioProcCreationFailed(OSStatus)
+    case deviceStartFailed(OSStatus)
+    case aggregateDeviceCreationFailed(OSStatus)
+    case sampleRateMismatch(expected: Double, actual: Double)
+    case deviceDisconnected(AudioDeviceID)
+    case permissionDenied(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .systemTapUnavailable(let msg): return "CoreAudio System Tap Unavailable: \(msg)"
+        case .processNotFound(let name): return "Audio Process Not Found: \(name)"
+        case .deviceNotFound(let id): return "Audio Hardware Device #\(id) Not Found"
+        case .ioProcCreationFailed(let status): return "Hardware IOProc Creation Failed (OSStatus \(status))"
+        case .deviceStartFailed(let status): return "Hardware Device Start Failed (OSStatus \(status))"
+        case .aggregateDeviceCreationFailed(let status): return "Tap Aggregate Device Failed (OSStatus \(status))"
+        case .sampleRateMismatch(let exp, let act): return "Sample Rate Mismatch (Expected \(Int(exp)) Hz, Device is \(Int(act)) Hz)"
+        case .deviceDisconnected(let id): return "Audio Device #\(id) was disconnected"
+        case .permissionDenied(let msg): return "Audio Permission Denied: \(msg)"
+        }
+    }
+}
+
 /// Dedicated, Ultra-Lightweight Audio Routing Backend.
 /// Explicitly captures audio streams (via macOS 14.2+ Process Tap or Hardware Input) and routes them directly
 /// to physical output devices via low-level CoreAudio HAL.
@@ -67,22 +94,29 @@ public final class AudioEngineManager: @unchecked Sendable {
     public var feedbackProtectionEnabled: Bool = true
     public var isMuted: Bool = false
 
+    // Real-Time Buffer Diagnostic Telemetry
+    public var underrunCount: Int = 0
+    public func resetUnderrunCount() {
+        underrunCount = 0
+    }
+
     // Explicit Client Hook for DSP Audio Manipulation
     public weak var client: AudioProcessingClient?
 
-    // Latency Telemetry Callback
+    // Telemetry & Error Callbacks
     public var onLatencyUpdate: ((Double) -> Void)?
+    public var onError: ((AudioRouterError) -> Void)?
 
-    private var currentSampleRate: Double = 48000.0
-    private var currentBufferFrames: UInt32 = 256
+    public private(set) var currentSampleRate: Double = 48000.0
+    public private(set) var currentBufferFrames: UInt32 = 256
 
-    // Pre-allocated scratch buffers for interleaved microphone/device streams
-    private var leftScratch = [Float](repeating: 0.0, count: 8192)
-    private var rightScratch = [Float](repeating: 0.0, count: 8192)
+    // Pre-allocated scratch buffers for interleaved microphone/device streams (zero-allocation IOProc)
+    private var leftScratch = [Float](repeating: 0.0, count: 16384)
+    private var rightScratch = [Float](repeating: 0.0, count: 16384)
 
     public init() {}
 
-    /// Configures and starts live system I/O routing.
+    /// Configures and starts live system I/O routing with comprehensive error handling.
     public func start(
         captureSource: AudioCaptureSource = .systemAudio,
         inputDeviceID: AudioDeviceID? = nil,
@@ -98,12 +132,20 @@ public final class AudioEngineManager: @unchecked Sendable {
         self.captureSource = captureSource
         let outputID = outputDeviceID ?? CoreAudioManager.shared.getDefaultOutputDeviceID()
         let inputID = inputDeviceID ?? CoreAudioManager.shared.getDefaultInputDeviceID()
+
+        guard outputID != 0 else {
+            let err = AudioRouterError.deviceNotFound(0)
+            onError?(err)
+            throw err
+        }
+
         self.activeOutputID = outputID
         self.activeInputID = inputID
 
         self.currentSampleRate = CoreAudioManager.shared.fetchAllDevices().first(where: { $0.id == outputID })?.currentSampleRate ?? 48000.0
         self.currentBufferFrames = CoreAudioManager.shared.getBufferFrameSize(deviceID: outputID)
         ringBuffer.reset()
+        resetUnderrunCount()
 
         // 1. Connect Capture Source (System Audio Tap or Hardware Mic)
         if captureSource == .systemAudio {
@@ -113,11 +155,30 @@ public final class AudioEngineManager: @unchecked Sendable {
                     self?.ringBuffer.write(left: left, right: right, count: count)
                 }
                 let targets = selectedTargetProcessID != nil ? [selectedTargetProcessID!] : []
-                try tap.start(targetIDs: targets, muteTargetOutput: true)
+                do {
+                    try tap.start(
+                        targetIDs: targets,
+                        muteTargetOutput: true,
+                        targetSampleRate: self.currentSampleRate,
+                        targetBufferSize: self.currentBufferFrames
+                    )
+                } catch {
+                    let tapErr = AudioRouterError.systemTapUnavailable(error.localizedDescription)
+                    onError?(tapErr)
+                    throw tapErr
+                }
             } else {
-                throw NSError(domain: "dynaQ.AudioRouter", code: 2, userInfo: [NSLocalizedDescriptionKey: "System Audio Tapping requires macOS 14.2 or later."])
+                let err = AudioRouterError.systemTapUnavailable("System Audio Tapping requires macOS 14.2 or later")
+                onError?(err)
+                throw err
             }
         } else {
+            guard inputID != 0 else {
+                let err = AudioRouterError.deviceNotFound(0)
+                onError?(err)
+                throw err
+            }
+
             var procID: AudioDeviceIOProcID? = nil
             let inStatus = AudioDeviceCreateIOProcID(inputID, { (_, _, inputData, _, _, _, clientData) -> OSStatus in
                 guard let clientData = clientData else { return noErr }
@@ -129,7 +190,7 @@ public final class AudioEngineManager: @unchecked Sendable {
                 if abl.count >= 2, let rPtr = abl[1].mData?.assumingMemoryBound(to: Float.self) {
                     manager.ringBuffer.write(left: ptr, right: rPtr, count: frameCount)
                 } else if buf.mNumberChannels >= 2 {
-                    let count = min(frameCount, 8192)
+                    let count = min(frameCount, 16384)
                     manager.leftScratch.withUnsafeMutableBufferPointer { lPtr in
                         manager.rightScratch.withUnsafeMutableBufferPointer { rPtr in
                             c_dsp_deinterleave_stereo(ptr, lPtr.baseAddress!, rPtr.baseAddress!, count)
@@ -143,13 +204,22 @@ public final class AudioEngineManager: @unchecked Sendable {
             }, Unmanaged.passUnretained(self).toOpaque(), &procID)
 
             guard inStatus == noErr, let validInProc = procID else {
-                throw NSError(domain: "dynaQ.AudioRouter", code: Int(inStatus), userInfo: [NSLocalizedDescriptionKey: "Failed to connect input hardware IOProc."])
+                let err = AudioRouterError.ioProcCreationFailed(inStatus)
+                onError?(err)
+                throw err
+            }
+
+            let startInStatus = AudioDeviceStart(inputID, validInProc)
+            guard startInStatus == noErr else {
+                AudioDeviceDestroyIOProcID(inputID, validInProc)
+                let err = AudioRouterError.deviceStartFailed(startInStatus)
+                onError?(err)
+                throw err
             }
             self.inputHardwareIOProcID = validInProc
-            AudioDeviceStart(inputID, validInProc)
         }
 
-        // 2. Attach Dedicated Ultra-Lightweight Output IOProc directly to the physical hardware device
+        // 2. Attach Dedicated Output IOProc directly to physical hardware device
         var outProcID: AudioDeviceIOProcID? = nil
         let outStatus = AudioDeviceCreateIOProcID(outputID, { (_, _, _, _, outputData, _, clientData) -> OSStatus in
             guard let clientData = clientData else { return noErr }
@@ -171,9 +241,16 @@ public final class AudioEngineManager: @unchecked Sendable {
 
             // Split Stereo Channels (e.g. CoreAudio Standard Device)
             if abl.count >= 2, let rPtr = abl[1].mData?.assumingMemoryBound(to: Float.self) {
-                _ = manager.ringBuffer.read(left: ptr, right: rPtr, count: frameCount)
+                let framesRead = manager.ringBuffer.read(left: ptr, right: rPtr, count: frameCount)
+                if framesRead < frameCount {
+                    manager.underrunCount &+= 1
+                    // Clear remainder of buffer to prevent static, buzzing, and old audio ghosting
+                    let remaining = frameCount - framesRead
+                    ptr.advanced(by: framesRead).update(repeating: 0.0, count: remaining)
+                    rPtr.advanced(by: framesRead).update(repeating: 0.0, count: remaining)
+                }
 
-                // Explicit Routing: Hand off to client for heavy manipulation if registered; otherwise pure passthrough
+                // Explicit Routing: Hand off to client for heavy manipulation if registered; otherwise passthrough
                 if let client = manager.client {
                     client.processAudioBlock(
                         left: ptr,
@@ -185,10 +262,16 @@ public final class AudioEngineManager: @unchecked Sendable {
 
             } else if buf.mNumberChannels >= 2 {
                 // Interleaved Stereo Channels (e.g. Built-in Speakers / Bluetooth AirPods)
-                let countToProcess = min(frameCount, 8192)
+                let countToProcess = min(frameCount, 16384)
                 manager.leftScratch.withUnsafeMutableBufferPointer { lPtr in
                     manager.rightScratch.withUnsafeMutableBufferPointer { rPtr in
-                        _ = manager.ringBuffer.read(left: lPtr.baseAddress!, right: rPtr.baseAddress!, count: countToProcess)
+                        let framesRead = manager.ringBuffer.read(left: lPtr.baseAddress!, right: rPtr.baseAddress!, count: countToProcess)
+                        if framesRead < countToProcess {
+                            manager.underrunCount &+= 1
+                            let remaining = countToProcess - framesRead
+                            lPtr.baseAddress!.advanced(by: framesRead).update(repeating: 0.0, count: remaining)
+                            rPtr.baseAddress!.advanced(by: framesRead).update(repeating: 0.0, count: remaining)
+                        }
 
                         // Explicit Routing: Client DSP manipulation
                         if let client = manager.client {
@@ -210,11 +293,20 @@ public final class AudioEngineManager: @unchecked Sendable {
         }, Unmanaged.passUnretained(self).toOpaque(), &outProcID)
 
         guard outStatus == noErr, let validOutProc = outProcID else {
-            throw NSError(domain: "dynaQ.AudioRouter", code: Int(outStatus), userInfo: [NSLocalizedDescriptionKey: "Failed to create hardware output IOProc (OSStatus \(outStatus))"])
+            let err = AudioRouterError.ioProcCreationFailed(outStatus)
+            onError?(err)
+            throw err
         }
-        self.outputIOProcID = validOutProc
-        AudioDeviceStart(outputID, validOutProc)
 
+        let startOutStatus = AudioDeviceStart(outputID, validOutProc)
+        guard startOutStatus == noErr else {
+            AudioDeviceDestroyIOProcID(outputID, validOutProc)
+            let err = AudioRouterError.deviceStartFailed(startOutStatus)
+            onError?(err)
+            throw err
+        }
+
+        self.outputIOProcID = validOutProc
         self.isRunning = true
 
         DispatchQueue.main.async { [weak self] in
@@ -268,11 +360,27 @@ public final class AudioEngineManager: @unchecked Sendable {
     }
 
     public func switchInputDevice(id: AudioDeviceID) throws {
-        try start(captureSource: captureSource, inputDeviceID: id, outputDeviceID: activeOutputID)
+        do {
+            try start(captureSource: captureSource, inputDeviceID: id, outputDeviceID: activeOutputID)
+        } catch {
+            let defaultIn = CoreAudioManager.shared.getDefaultInputDeviceID()
+            if defaultIn != id && defaultIn != 0 {
+                try? start(captureSource: captureSource, inputDeviceID: defaultIn, outputDeviceID: activeOutputID)
+            }
+            throw error
+        }
     }
 
     public func switchOutputDevice(id: AudioDeviceID) throws {
-        try start(captureSource: captureSource, inputDeviceID: activeInputID, outputDeviceID: id)
+        do {
+            try start(captureSource: captureSource, inputDeviceID: activeInputID, outputDeviceID: id)
+        } catch {
+            let defaultOut = CoreAudioManager.shared.getDefaultOutputDeviceID()
+            if defaultOut != id && defaultOut != 0 {
+                try? start(captureSource: captureSource, inputDeviceID: activeInputID, outputDeviceID: defaultOut)
+            }
+            throw error
+        }
     }
 
     public func setBufferFrameSize(_ frames: UInt32) {

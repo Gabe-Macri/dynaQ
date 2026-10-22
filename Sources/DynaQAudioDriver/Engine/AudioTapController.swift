@@ -1,6 +1,7 @@
 import Foundation
 import CoreAudio
 import DynaQCore
+import CDspKernel
 
 /// Discovered macOS audio application available for equalization.
 public struct AudioAppProcess: Identifiable, Hashable, Sendable {
@@ -27,6 +28,10 @@ public final class SystemAudioTap: @unchecked Sendable {
     private var tapIOProcID: AudioDeviceIOProcID? = nil
     private var isRunning: Bool = false
     private let lock = NSLock()
+
+    // Pre-allocated scratch buffers for zero-allocation real-time deinterleaving
+    private var deinterleaveLeft = [Float](repeating: 0.0, count: 16384)
+    private var deinterleaveRight = [Float](repeating: 0.0, count: 16384)
 
     public var onAudioFrames: ((UnsafePointer<Float>, UnsafePointer<Float>, Int) -> Void)?
 
@@ -94,8 +99,13 @@ public final class SystemAudioTap: @unchecked Sendable {
         return results
     }
 
-    /// Creates and starts tapping target processes. If targetIDs is empty, auto-detects active media apps.
-    public func start(targetIDs: [AudioObjectID] = [], muteTargetOutput: Bool = true) throws {
+    /// Creates and starts tapping target processes. If targetIDs is empty, captures all active audio processes.
+    public func start(
+        targetIDs: [AudioObjectID] = [],
+        muteTargetOutput: Bool = true,
+        targetSampleRate: Double? = nil,
+        targetBufferSize: UInt32? = nil
+    ) throws {
         lock.lock()
         defer { lock.unlock() }
 
@@ -105,22 +115,16 @@ public final class SystemAudioTap: @unchecked Sendable {
         var processList = targetIDs
         if processList.isEmpty {
             let apps = fetchAudioProcesses()
-            // Prioritize known playback apps
-            let mediaApps = apps.filter {
-                let b = $0.bundleID.lowercased()
-                return b.contains("music") || b.contains("spotify") || b.contains("safari") ||
-                       b.contains("chrome") || b.contains("quicktime") || b.contains("logic") ||
-                       b.contains("ableton") || b.contains("reaper") || b.contains("youtube")
-            }
-            if let firstMedia = mediaApps.first {
-                processList = [firstMedia.id]
-            } else if let firstApp = apps.first {
-                processList = [firstApp.id]
-            }
+            // Tap ALL active audio processes for true system-wide capture
+            processList = apps.map { $0.id }
         }
 
         guard !processList.isEmpty else {
-            throw NSError(domain: "dynaQ.SystemAudioTap", code: 1, userInfo: [NSLocalizedDescriptionKey: "No active audio playback applications found to tap."])
+            throw NSError(
+                domain: "dynaQ.SystemAudioTap",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "No active audio processes detected. Start audio playback and retry."]
+            )
         }
 
         // 2. Build CATapDescription with .mutedWhenTapped so raw audio is redirected ONLY through dynaQ
@@ -180,7 +184,28 @@ public final class SystemAudioTap: @unchecked Sendable {
         }
         self.aggregateID = newAggregateID
 
-        // 5. Install IOProc on the Aggregate Tap Device
+        // Synchronize nominal sample rate and buffer frame size with physical output device
+        if let targetSR = targetSampleRate, targetSR > 8000.0 {
+            var sr = Float64(targetSR)
+            var srAddress = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyNominalSampleRate,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            _ = AudioObjectSetPropertyData(newAggregateID, &srAddress, 0, nil, UInt32(MemoryLayout<Float64>.size), &sr)
+        }
+
+        if let bufSize = targetBufferSize, bufSize > 0 {
+            var frames = bufSize
+            var bufAddress = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyBufferFrameSize,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            _ = AudioObjectSetPropertyData(newAggregateID, &bufAddress, 0, nil, UInt32(MemoryLayout<UInt32>.size), &frames)
+        }
+
+        // 5. Install IOProc on the Aggregate Tap Device (Zero-allocation path)
         var procID: AudioDeviceIOProcID? = nil
         let procStatus = AudioDeviceCreateIOProcID(newAggregateID, { (_, _, inputData, _, _, _, clientData) -> OSStatus in
             guard let clientData = clientData else { return noErr }
@@ -196,15 +221,11 @@ public final class SystemAudioTap: @unchecked Sendable {
                     let rPtr = rRaw.assumingMemoryBound(to: Float.self)
                     tapSelf.onAudioFrames?(ptr, rPtr, frameCount)
                 } else {
-                    var left = [Float](repeating: 0.0, count: frameCount)
-                    var right = [Float](repeating: 0.0, count: frameCount)
-                    for i in 0..<frameCount {
-                        left[i] = ptr[i * 2]
-                        right[i] = ptr[i * 2 + 1]
-                    }
-                    left.withUnsafeBufferPointer { lPtr in
-                        right.withUnsafeBufferPointer { rPtr in
-                            tapSelf.onAudioFrames?(lPtr.baseAddress!, rPtr.baseAddress!, frameCount)
+                    let countToProcess = min(frameCount, 16384)
+                    tapSelf.deinterleaveLeft.withUnsafeMutableBufferPointer { lPtr in
+                        tapSelf.deinterleaveRight.withUnsafeMutableBufferPointer { rPtr in
+                            c_dsp_deinterleave_stereo(ptr, lPtr.baseAddress!, rPtr.baseAddress!, countToProcess)
+                            tapSelf.onAudioFrames?(lPtr.baseAddress!, rPtr.baseAddress!, countToProcess)
                         }
                     }
                 }

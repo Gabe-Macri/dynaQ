@@ -98,12 +98,13 @@ size_t c_ringbuffer_available_read(const c_ringbuffer_t* rb) {
     if (!rb) return 0;
     size_t w = atomic_load_explicit(&rb->write_index, memory_order_acquire);
     size_t r = atomic_load_explicit(&rb->read_index, memory_order_acquire);
-    return (w >= r) ? (w - r) : (rb->capacity - (r - w));
+    return (w >= r) ? (w - r) : 0;
 }
 
 size_t c_ringbuffer_available_write(const c_ringbuffer_t* rb) {
     if (!rb) return 0;
-    return rb->capacity - 1 - c_ringbuffer_available_read(rb);
+    size_t read_avail = c_ringbuffer_available_read(rb);
+    return (rb->capacity > read_avail) ? (rb->capacity - read_avail) : 0;
 }
 
 size_t c_ringbuffer_write_stereo(c_ringbuffer_t* rb, const float* left, const float* right, size_t count) {
@@ -111,26 +112,28 @@ size_t c_ringbuffer_write_stereo(c_ringbuffer_t* rb, const float* left, const fl
 
     size_t w = atomic_load_explicit(&rb->write_index, memory_order_relaxed);
     size_t r = atomic_load_explicit(&rb->read_index, memory_order_acquire);
-    size_t available = (w >= r) ? (rb->capacity - 1 - (w - r)) : (r - w - 1);
+    size_t in_buffer = (w >= r) ? (w - r) : 0;
+    size_t available = (rb->capacity > in_buffer) ? (rb->capacity - in_buffer) : 0;
 
     size_t to_write = (count < available) ? count : available;
     if (to_write == 0) return 0;
 
     size_t mask = rb->mask;
-    size_t part1 = rb->capacity - (w & mask);
+    size_t start_idx = w & mask;
+    size_t part1 = rb->capacity - start_idx;
 
     if (to_write <= part1) {
-        memcpy(rb->left + (w & mask), left, to_write * sizeof(float));
-        memcpy(rb->right + (w & mask), right, to_write * sizeof(float));
+        memcpy(rb->left + start_idx, left, to_write * sizeof(float));
+        memcpy(rb->right + start_idx, right, to_write * sizeof(float));
     } else {
-        memcpy(rb->left + (w & mask), left, part1 * sizeof(float));
-        memcpy(rb->right + (w & mask), right, part1 * sizeof(float));
+        memcpy(rb->left + start_idx, left, part1 * sizeof(float));
+        memcpy(rb->right + start_idx, right, part1 * sizeof(float));
         size_t part2 = to_write - part1;
         memcpy(rb->left, left + part1, part2 * sizeof(float));
         memcpy(rb->right, right + part1, part2 * sizeof(float));
     }
 
-    atomic_store_explicit(&rb->write_index, (w + to_write) & mask, memory_order_release);
+    atomic_store_explicit(&rb->write_index, w + to_write, memory_order_release);
     return to_write;
 }
 
@@ -139,29 +142,30 @@ size_t c_ringbuffer_read_stereo(c_ringbuffer_t* rb, float* left, float* right, s
 
     size_t r = atomic_load_explicit(&rb->read_index, memory_order_relaxed);
     size_t w = atomic_load_explicit(&rb->write_index, memory_order_acquire);
-    size_t available = (w >= r) ? (w - r) : (rb->capacity - (r - w));
+    size_t available = (w >= r) ? (w - r) : 0;
 
     size_t to_read = (count < available) ? count : available;
 
     if (to_read > 0) {
         size_t mask = rb->mask;
-        size_t part1 = rb->capacity - (r & mask);
+        size_t start_idx = r & mask;
+        size_t part1 = rb->capacity - start_idx;
 
         if (to_read <= part1) {
-            memcpy(left, rb->left + (r & mask), to_read * sizeof(float));
-            memcpy(right, rb->right + (r & mask), to_read * sizeof(float));
+            memcpy(left, rb->left + start_idx, to_read * sizeof(float));
+            memcpy(right, rb->right + start_idx, to_read * sizeof(float));
         } else {
-            memcpy(left, rb->left + (r & mask), part1 * sizeof(float));
-            memcpy(right, rb->right + (r & mask), part1 * sizeof(float));
+            memcpy(left, rb->left + start_idx, part1 * sizeof(float));
+            memcpy(right, rb->right + start_idx, part1 * sizeof(float));
             size_t part2 = to_read - part1;
             memcpy(left + part1, rb->left, part2 * sizeof(float));
             memcpy(right + part1, rb->right, part2 * sizeof(float));
         }
 
-        atomic_store_explicit(&rb->read_index, (r + to_read) & mask, memory_order_release);
+        atomic_store_explicit(&rb->read_index, r + to_read, memory_order_release);
     }
 
-    // Zero-fill underruns to prevent glitching
+    // Zero-fill underruns to prevent glitching and stale repeat buffers
     if (to_read < count) {
         memset(left + to_read, 0, (count - to_read) * sizeof(float));
         memset(right + to_read, 0, (count - to_read) * sizeof(float));
@@ -235,12 +239,16 @@ static inline void process_biquad_single_channel(
     float* __restrict__ s1_ptr,
     float* __restrict__ s2_ptr
 ) {
-    // Smooth coefficients toward target
-    curr->b0 += (target->b0 - curr->b0) * 0.1f;
-    curr->b1 += (target->b1 - curr->b1) * 0.1f;
-    curr->b2 += (target->b2 - curr->b2) * 0.1f;
-    curr->a1 += (target->a1 - curr->a1) * 0.1f;
-    curr->a2 += (target->a2 - curr->a2) * 0.1f;
+    // Smooth coefficients toward target or snap if close
+    if (fabsf(target->b0 - curr->b0) < 1e-6f && fabsf(target->a1 - curr->a1) < 1e-6f) {
+        *curr = *target;
+    } else {
+        curr->b0 += (target->b0 - curr->b0) * 0.15f;
+        curr->b1 += (target->b1 - curr->b1) * 0.15f;
+        curr->b2 += (target->b2 - curr->b2) * 0.15f;
+        curr->a1 += (target->a1 - curr->a1) * 0.15f;
+        curr->a2 += (target->a2 - curr->a2) * 0.15f;
+    }
 
     const float b0 = curr->b0;
     const float b1 = curr->b1;
@@ -257,10 +265,19 @@ static inline void process_biquad_single_channel(
         float y = b0 * x + s1;
         s1 = b1 * x - a1 * y + s2;
         s2 = b2 * x - a2 * y;
+
+        // Guard against NaN/Inf divergences and denormals
+        if (isnan(y) || isinf(y)) {
+            y = 0.0f;
+            s1 = 0.0f;
+            s2 = 0.0f;
+        } else if (fabsf(y) < 1e-15f) {
+            y = 0.0f;
+        }
         buffer[i] = y;
     }
 
-    // Flush denormals
+    // Flush state denormals
     if (fabsf(s1) < 1e-15f) s1 = 0.0f;
     if (fabsf(s2) < 1e-15f) s2 = 0.0f;
 
@@ -285,15 +302,17 @@ void c_eq_engine_process_stereo(c_eq_engine_t* eq, float* left, float* right, si
         vDSP_vsmul(right, 1, &neg, right, 1, count);
     }
 
-    // Static scratch memory for Mid/Side matrixing
-    static float mid_scratch[8192];
-    static float side_scratch[8192];
-    float* mid_buf = mid_scratch;
-    float* side_buf = side_scratch;
+    // Thread-safe scratch memory for Mid/Side matrixing
+    float stack_mid[2048];
+    float stack_side[2048];
+    float* mid_buf = stack_mid;
+    float* side_buf = stack_side;
+    bool allocated = false;
 
-    if (count > 8192) {
+    if (count > 2048) {
         mid_buf = (float*)malloc(count * sizeof(float));
         side_buf = (float*)malloc(count * sizeof(float));
+        allocated = true;
     }
 
     // 3. Cascade of Biquad Filter Bands
@@ -329,9 +348,9 @@ void c_eq_engine_process_stereo(c_eq_engine_t* eq, float* left, float* right, si
         }
     }
 
-    if (count > 8192) {
-        free(mid_buf);
-        free(side_buf);
+    if (allocated) {
+        if (mid_buf) free(mid_buf);
+        if (side_buf) free(side_buf);
     }
 
     // 4. Vectorized Master Gain
@@ -388,32 +407,40 @@ void c_dsp_midside_decode(const float* mid, const float* side, float* left, floa
 void c_dsp_limiter_process_stereo(float* left, float* right, size_t count, float linear_ceiling, bool enabled) {
     if (!enabled || !left || !right || count == 0) return;
 
-    const float ceiling = linear_ceiling > 0.05f ? linear_ceiling : 0.9772f;
+    const float ceiling = linear_ceiling > 0.05f ? linear_ceiling : 0.944f;
     const float knee = ceiling * 0.85f;
-    const float inv_range = 1.0f / (ceiling - knee);
+    const float range = ceiling - knee;
+    const float inv_range = (range > 1e-6f) ? (1.0f / range) : 1.0f;
 
     #pragma clang loop unroll_count(4)
     for (size_t i = 0; i < count; i++) {
-        // Left Channel
         float xl = left[i];
-        float abs_xl = fabsf(xl);
-        if (abs_xl > knee) {
-            float sign = xl < 0.0f ? -1.0f : 1.0f;
-            float over = (abs_xl - knee) * inv_range;
-            // Smooth fast rational soft-clip: y = knee + range * (over / (1.0 + over))
-            float sat = knee + (ceiling - knee) * (over / (1.0f + over));
-            left[i] = sign * (sat < ceiling ? sat : ceiling);
+        float xr = right[i];
+        float abs_l = fabsf(xl);
+        float abs_r = fabsf(xr);
+        float max_peak = fmaxf(abs_l, abs_r);
+
+        if (max_peak > knee) {
+            float over = (max_peak - knee) * inv_range;
+            float target = knee + range * (over / (1.0f + over));
+            if (target > ceiling) target = ceiling;
+            float gain = (max_peak > 1e-9f) ? (target / max_peak) : 1.0f;
+            if (gain > 1.0f) gain = 1.0f;
+
+            // Stereo-linked gain compression preserves spatial stereo image without distortion
+            xl *= gain;
+            xr *= gain;
         }
 
-        // Right Channel
-        float xr = right[i];
-        float abs_xr = fabsf(xr);
-        if (abs_xr > knee) {
-            float sign = xr < 0.0f ? -1.0f : 1.0f;
-            float over = (abs_xr - knee) * inv_range;
-            float sat = knee + (ceiling - knee) * (over / (1.0f + over));
-            right[i] = sign * (sat < ceiling ? sat : ceiling);
-        }
+        // Brickwall ceiling guard for true inter-sample peaks
+        if (xl > ceiling) xl = ceiling;
+        else if (xl < -ceiling) xl = -ceiling;
+
+        if (xr > ceiling) xr = ceiling;
+        else if (xr < -ceiling) xr = -ceiling;
+
+        left[i] = xl;
+        right[i] = xr;
     }
 }
 
