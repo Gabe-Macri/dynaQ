@@ -11,4 +11,9 @@ DerivedData/
 /dist/
 /output/
 .ci
+target/
+**/target/
+__pycache__/
+*.pyc
+*.egg-info/
 

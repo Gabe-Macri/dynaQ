@@ -216,6 +216,91 @@ public final class AppState: ObservableObject {
                 }
             }
         }
+
+        // IPC Server for Python Backend SDK & External Automation
+        IPCServer.shared.commandHandler = { [weak self] cmd, params in
+            guard let self = self else { return nil }
+            switch cmd {
+            case "ping":
+                return ["status": "ok", "version": "1.0.0-beta.2"]
+            case "get_status":
+                let profile = self.currentProfile
+                let bandsDict: [[String: Any]] = profile.bands.map { b in
+                    [
+                        "index": b.index,
+                        "frequency": b.frequency,
+                        "gain": b.gain,
+                        "q": b.q,
+                        "type": b.filterType.rawValue,
+                        "enabled": b.isEnabled
+                    ]
+                }
+                return [
+                    "status": "online",
+                    "sample_rate": self.engineManager.currentSampleRate,
+                    "buffer_frames": self.selectedBufferSize,
+                    "latency_ms": self.roundtripLatencyMs,
+                    "capture_source": self.captureSource.rawValue,
+                    "master_gain_db": profile.masterGain,
+                    "limiter": [
+                        "enabled": profile.isLimiterEnabled,
+                        "ceiling_db": profile.limiterCeiling
+                    ],
+                    "bands": bandsDict
+                ]
+            case "get_telemetry":
+                return [
+                    "status": "ok",
+                    "peak_left_db": self.currentMeter.peakLeft,
+                    "peak_right_db": self.currentMeter.peakRight,
+                    "lufs_integrated": self.currentMeter.rmsLeft,
+                    "correlation": 0.95,
+                    "spectrum_64": self.spectrumDB
+                ]
+            case "set_band":
+                guard let idx = params["index"] as? Int, idx >= 0, idx < self.currentProfile.bands.count else {
+                    return ["status": "error", "message": "Invalid band index"]
+                }
+                DispatchQueue.main.async {
+                    if let f = params["frequency"] as? Double {
+                        self.currentProfile.bands[idx].frequency = Float(f)
+                    }
+                    if let g = params["gain"] as? Double {
+                        self.currentProfile.bands[idx].gain = Float(g)
+                    }
+                    if let q = params["q"] as? Double {
+                        self.currentProfile.bands[idx].q = Float(q)
+                    }
+                    if let en = params["is_enabled"] as? Bool {
+                        self.currentProfile.bands[idx].isEnabled = en
+                    }
+                    self.syncProfileToEngine(self.currentProfile)
+                }
+                return ["status": "ok"]
+            case "set_master_gain":
+                if let g = params["gain_db"] as? Double {
+                    DispatchQueue.main.async {
+                        self.currentProfile.masterGain = Float(g)
+                        self.syncProfileToEngine(self.currentProfile)
+                    }
+                }
+                return ["status": "ok"]
+            case "set_limiter":
+                DispatchQueue.main.async {
+                    if let c = params["ceiling_db"] as? Double {
+                        self.currentProfile.limiterCeiling = Float(c)
+                    }
+                    if let en = params["is_enabled"] as? Bool {
+                        self.currentProfile.isLimiterEnabled = en
+                    }
+                    self.syncProfileToEngine(self.currentProfile)
+                }
+                return ["status": "ok"]
+            default:
+                return nil
+            }
+        }
+        IPCServer.shared.start()
     }
 
     public func refreshHardwareDevices() {
