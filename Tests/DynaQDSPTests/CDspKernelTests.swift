@@ -306,4 +306,44 @@ final class CDspKernelTests: XCTestCase {
         let corrOutOfPhase = c_dsp_measure_phase_correlation(monoL, outOfPhaseR, count)
         XCTAssertEqual(corrOutOfPhase, -1.0, accuracy: 1e-4)
     }
+
+    func testLookaheadLimiterLiveModeZeroLatency() {
+        guard let lim = c_lookahead_limiter_create(32, 48000.0, 0.95) else {
+            XCTFail("Failed to allocate lookahead limiter")
+            return
+        }
+        defer { c_lookahead_limiter_destroy(lim) }
+
+        // Enable Zero-Latency Live Mode
+        c_lookahead_limiter_set_live_mode(lim, true)
+        XCTAssertTrue(c_lookahead_limiter_get_live_mode(lim))
+
+        let count = 16
+        // Spikes at samples 0..15
+        var left = [Float](repeating: 3.0, count: count)
+        var right = [Float](repeating: 3.0, count: count)
+
+        // In Live Mode, limiter immediately processes sample 0 with 0 lookahead delay
+        c_lookahead_limiter_process(lim, &left, &right, count)
+
+        for i in 0..<count {
+            XCTAssertLessThanOrEqual(left[i], 0.951, "Sample \(i) must be clamped immediately without lookahead delay")
+            XCTAssertLessThanOrEqual(right[i], 0.951, "Sample \(i) must be clamped immediately without lookahead delay")
+        }
+    }
+
+    func testEnsureMidSideDecodedMatrix() {
+        let count = 8
+        // Mid = 0.8, Side = 0.2
+        var left = [Float](repeating: 0.8, count: count)
+        var right = [Float](repeating: 0.2, count: count)
+
+        // Decode: L = Mid + Side = 1.0, R = Mid - Side = 0.6
+        c_dsp_ensure_midside_decoded(&left, &right, count, true)
+
+        for i in 0..<count {
+            XCTAssertEqual(left[i], 1.0, accuracy: 1e-5, "L must equal Mid + Side")
+            XCTAssertEqual(right[i], 0.6, accuracy: 1e-5, "R must equal Mid - Side")
+        }
+    }
 }

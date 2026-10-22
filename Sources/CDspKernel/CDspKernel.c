@@ -420,6 +420,19 @@ void c_dsp_midside_decode(const float* mid, const float* side, float* left, floa
     vDSP_vsub(side, 1, mid, 1, right, 1, count);
 }
 
+void c_dsp_ensure_midside_decoded(float* left, float* right, size_t count, bool is_midside) {
+    if (!is_midside || !left || !right || count == 0) return;
+    // In-place M/S to discrete L/R stereo decoding matrix
+    // L = Mid + Side, R = Mid - Side
+    #pragma clang loop unroll_count(4)
+    for (size_t i = 0; i < count; i++) {
+        float m = left[i];
+        float s = right[i];
+        left[i] = m + s;
+        right[i] = m - s;
+    }
+}
+
 // ============================================================================
 // 4. Vectorized Dynamics: Soft-Knee Peak Limiter
 // ============================================================================
@@ -478,6 +491,7 @@ struct c_lookahead_limiter {
     float attack_coeff;
     float release_coeff;
     float ceiling;
+    bool live_mode;
 };
 
 c_lookahead_limiter_t* c_lookahead_limiter_create(size_t lookahead_samples, float sample_rate, float ceiling_linear) {
@@ -493,6 +507,7 @@ c_lookahead_limiter_t* c_lookahead_limiter_create(size_t lookahead_samples, floa
     lim->delay_right = (float*)calloc(lim->capacity, sizeof(float));
     lim->current_gain = 1.0f;
     lim->ceiling = ceiling_linear > 0.05f ? ceiling_linear : 0.9772f;
+    lim->live_mode = false;
 
     float sr = sample_rate > 8000.0f ? sample_rate : 48000.0f;
     float attack_ms = 1.0f;
@@ -523,8 +538,24 @@ void c_lookahead_limiter_set_ceiling(c_lookahead_limiter_t* lim, float ceiling_l
     lim->ceiling = ceiling_linear > 0.05f ? ceiling_linear : 0.9772f;
 }
 
+void c_lookahead_limiter_set_live_mode(c_lookahead_limiter_t* lim, bool live_mode) {
+    if (!lim) return;
+    lim->live_mode = live_mode;
+}
+
+bool c_lookahead_limiter_get_live_mode(const c_lookahead_limiter_t* lim) {
+    return lim ? lim->live_mode : false;
+}
+
 void c_lookahead_limiter_process(c_lookahead_limiter_t* lim, float* left, float* right, size_t count) {
     if (!lim || !left || !right || count == 0) return;
+
+    if (lim->live_mode) {
+        // Zero-Latency / Live Mode: bypasses the circular delay line entirely (0 samples latency)
+        // for live tracking in Logic Pro / DAWs while preserving stereo-linked brickwall ceiling clamping.
+        c_dsp_limiter_process_stereo(left, right, count, lim->ceiling, true);
+        return;
+    }
 
     const size_t cap = lim->capacity;
     const size_t look = lim->lookahead;

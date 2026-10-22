@@ -69,6 +69,13 @@ public final class AppState: ObservableObject {
             logDiagnostic(level: "INFO", message: "Feedback protection \(feedbackProtection ? "ENABLED" : "DISABLED")")
         }
     }
+    @Published public var isLiveMode: Bool = false {
+        didSet {
+            currentProfile.isLiveMode = isLiveMode
+            dspPipeline.limiter.isLiveMode = isLiveMode
+            logDiagnostic(level: "DSP", message: "Zero-Latency Live Tracking Mode \(isLiveMode ? "ENABLED (0ms delay for DAW)" : "DISABLED (Mastering True Peak)")")
+        }
+    }
 
     // Modal & Error Handling States
     @Published public var showSettingsModal: Bool = false
@@ -242,9 +249,11 @@ public final class AppState: ObservableObject {
                     "latency_ms": self.roundtripLatencyMs,
                     "capture_source": self.captureSource.rawValue,
                     "master_gain_db": profile.masterGain,
+                    "is_live_mode": self.isLiveMode,
                     "limiter": [
                         "enabled": profile.isLimiterEnabled,
-                        "ceiling_db": profile.limiterCeiling
+                        "ceiling_db": profile.limiterCeiling,
+                        "is_live_mode": profile.isLiveMode
                     ],
                     "bands": bandsDict
                 ]
@@ -296,6 +305,13 @@ public final class AppState: ObservableObject {
                     self.syncProfileToEngine(self.currentProfile)
                 }
                 return ["status": "ok"]
+            case "set_live_mode":
+                if let live = params["is_live_mode"] as? Bool {
+                    DispatchQueue.main.async {
+                        self.isLiveMode = live
+                    }
+                }
+                return ["status": "ok", "is_live_mode": self.isLiveMode]
             default:
                 return nil
             }

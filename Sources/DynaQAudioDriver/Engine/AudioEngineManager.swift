@@ -309,6 +309,33 @@ public final class AudioEngineManager: @unchecked Sendable {
         self.outputIOProcID = validOutProc
         self.isRunning = true
 
+        CoreAudioManager.shared.observeSampleRate(for: outputID)
+        CoreAudioManager.shared.onSampleRateChanged = { [weak self] devID, newSR in
+            self?.handleSampleRateChange(for: devID, newRate: newSR)
+        }
+
+        DispatchQueue.main.async { [weak self] in
+            self?.updateLatency()
+        }
+    }
+
+    /// Explicitly handles nominal sample-rate transitions on the active audio hardware device
+    /// (e.g. AirPods or external DAC shifting nominal clock between 96kHz, 48kHz, or 44.1kHz).
+    public func handleSampleRateChange(for deviceID: AudioDeviceID, newRate: Double) {
+        guard isRunning, let activeOut = activeOutputID, deviceID == activeOut else { return }
+        guard newRate > 0 && abs(newRate - currentSampleRate) > 1.0 else { return }
+
+        // 1. Immediately reset/flush lock-free ring buffer
+        // Prevents ghost audio chunks, half-speed pitch drop, and underrun distortion
+        ringBuffer.reset()
+
+        // 2. Update internal sample rate
+        self.currentSampleRate = newRate
+
+        // 3. Inform client pipeline so all biquad filter coefficients and lookahead buffers adapt
+        self.client?.sampleRateDidChange(to: Float(newRate))
+
+        // 4. Re-calculate roundtrip latency telemetry
         DispatchQueue.main.async { [weak self] in
             self?.updateLatency()
         }

@@ -33,6 +33,7 @@ public struct SettingsView: View {
     // DSP & Limiter Props
     public let isLimiterEnabled: Bool
     public let limiterCeiling: Float
+    public let isLiveMode: Bool
     public let isBypassed: Bool
 
     // Telemetry & Diagnostics Props
@@ -50,6 +51,7 @@ public struct SettingsView: View {
     public let onSelectBufferSize: (UInt32) -> Void
     public let onToggleFeedbackProtection: () -> Void
     public let onToggleLimiter: () -> Void
+    public let onToggleLiveMode: () -> Void
     public let onSelectLimiterCeiling: (Float) -> Void
     public let onToggleBypass: () -> Void
     public let onResetEngine: () -> Void
@@ -71,6 +73,7 @@ public struct SettingsView: View {
         feedbackProtection: Bool,
         isLimiterEnabled: Bool,
         limiterCeiling: Float,
+        isLiveMode: Bool = false,
         isBypassed: Bool,
         underrunCount: Int,
         isEngineOnline: Bool,
@@ -84,6 +87,7 @@ public struct SettingsView: View {
         onSelectBufferSize: @escaping (UInt32) -> Void,
         onToggleFeedbackProtection: @escaping () -> Void,
         onToggleLimiter: @escaping () -> Void,
+        onToggleLiveMode: @escaping () -> Void = {},
         onSelectLimiterCeiling: @escaping (Float) -> Void,
         onToggleBypass: @escaping () -> Void,
         onResetEngine: @escaping () -> Void,
@@ -104,6 +108,7 @@ public struct SettingsView: View {
         self.feedbackProtection = feedbackProtection
         self.isLimiterEnabled = isLimiterEnabled
         self.limiterCeiling = limiterCeiling
+        self.isLiveMode = isLiveMode
         self.isBypassed = isBypassed
         self.underrunCount = underrunCount
         self.isEngineOnline = isEngineOnline
@@ -117,6 +122,7 @@ public struct SettingsView: View {
         self.onSelectBufferSize = onSelectBufferSize
         self.onToggleFeedbackProtection = onToggleFeedbackProtection
         self.onToggleLimiter = onToggleLimiter
+        self.onToggleLiveMode = onToggleLiveMode
         self.onSelectLimiterCeiling = onSelectLimiterCeiling
         self.onToggleBypass = onToggleBypass
         self.onResetEngine = onResetEngine
@@ -504,6 +510,32 @@ public struct SettingsView: View {
             }
 
             Text("// SOFT-KNEE VECTORIZED STEREO-LINKED GAIN COMPRESSION ELIMINATES TRANSIENT FUZZ")
+                .font(.system(size: 8, design: .monospaced))
+                .foregroundColor(DynaQTheme.textMuted)
+
+            sectionHeader("LATENCY ARCHITECTURE / LIVE TRACKING")
+
+            HStack(spacing: 8) {
+                Button(action: onToggleLiveMode) {
+                    HStack(spacing: 6) {
+                        Rectangle()
+                            .fill(isLiveMode ? DynaQTheme.phosphorAmber : DynaQTheme.phosphorGreen)
+                            .frame(width: 6, height: 6)
+                        Text(isLiveMode ? "MODE: ZERO-LATENCY / LIVE (DAW)" : "MODE: MASTERING (TRUE PEAK)")
+                            .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(DynaQTheme.surface)
+                    .foregroundColor(isLiveMode ? DynaQTheme.phosphorAmber : DynaQTheme.phosphorGreen)
+                    .overlay(
+                        Rectangle().stroke(isLiveMode ? DynaQTheme.phosphorAmber : DynaQTheme.surfaceBorder, lineWidth: 1)
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+
+            Text(isLiveMode ? "// ZERO LATENCY (0 SAMPLES LOOKAHEAD): INSTANTANEOUS PEAK CLAMPING FOR LOGIC PRO / DAW TRACKING" : "// STUDIO MASTERING: 32-SAMPLE CIRCULAR DELAY LINE WITH 4X OVERSAMPLED TRUE PEAK GUARD")
                 .font(.system(size: 8, design: .monospaced))
                 .foregroundColor(DynaQTheme.textMuted)
         }

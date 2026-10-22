@@ -16,5 +16,12 @@ public protocol AudioProcessingClient: AnyObject, Sendable {
         count: Int,
         sampleRate: Float
     )
+
+    /// Invoked when the hardware output device switches sample rates (e.g. AirPods connecting and shifting 96kHz -> 48kHz).
+    func sampleRateDidChange(to newRate: Float)
+}
+
+public extension AudioProcessingClient {
+    func sampleRateDidChange(to newRate: Float) {}
 }
 
