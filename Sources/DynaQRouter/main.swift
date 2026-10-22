@@ -41,7 +41,9 @@ router.onLatencyUpdate = { latencyMs in
 
 do {
     try router.start(captureSource: .systemAudio, inputDeviceID: defInID, outputDeviceID: defOutID)
+    IPCServer.shared.start()
     print("// [ROUTER STATUS: ONLINE // ROUTING ACTIVE // PASSTHROUGH READY]")
+    print("// [IPC SERVER: ONLINE // UNIX: /tmp/dynaq_ipc.sock // TCP: 127.0.0.1:9876]")
     print("// Running in ultra-lightweight mode (~0.0% CPU). Press Ctrl+C to terminate.")
 } catch {
     print("!! [ROUTER ERROR] Failed to start audio router: \(error.localizedDescription)")
@@ -49,13 +51,15 @@ do {
 }
 
 signal(SIGINT) { _ in
-    print("\n// [ROUTER SHUTTING DOWN] Stopping HAL stream pipe...")
+    print("\n// [ROUTER SHUTTING DOWN] Stopping HAL stream pipe & IPC...")
+    IPCServer.shared.stop()
     AudioRouterBackend.shared.stop()
     print("// [ROUTER TERMINATED]")
     exit(0)
 }
 
 signal(SIGTERM) { _ in
+    IPCServer.shared.stop()
     AudioRouterBackend.shared.stop()
     exit(0)
 }

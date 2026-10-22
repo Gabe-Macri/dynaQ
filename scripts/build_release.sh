@@ -4,7 +4,7 @@ set -e
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-APP_VERSION="1.0.0-beta.1"
+APP_VERSION="1.0.0-beta.2"
 BUNDLE_ID="com.dynaq.audio"
 DIST_DIR="$REPO_ROOT/dist"
 OUTPUT_DIR="$REPO_ROOT/output"
@@ -70,6 +70,21 @@ chmod +x "$DIST_DIR/dynaq-cli"
 codesign --force --sign - "$DIST_DIR/dynaq-cli"
 
 # 
+# 4b. Build High-Performance Rust DSP & Acoustic Optimizer
+# 
+echo "\n[4b/8] Compiling Rust acoustic optimization engine (dynaq-rust)..."
+CARGO_CMD="$HOME/.cargo/bin/cargo"
+if [ ! -x "$CARGO_CMD" ]; then
+    CARGO_CMD="cargo"
+fi
+(cd "$REPO_ROOT/native/dynaq-rust" && "$CARGO_CMD" build --release)
+cp "$REPO_ROOT/native/dynaq-rust/target/release/dynaq-opt" "$DIST_DIR/dynaq-opt"
+cp "$REPO_ROOT/native/dynaq-rust/target/release/libdynaq_rust.dylib" "$DIST_DIR/libdynaq_rust.dylib"
+chmod +x "$DIST_DIR/dynaq-opt"
+codesign --force --sign - "$DIST_DIR/dynaq-opt"
+codesign --force --sign - "$DIST_DIR/libdynaq_rust.dylib"
+
+# 
 # 5. Assemble Self-Contained dynaQ.app Bundle
 # 
 echo "\n[5/8] Assembling self-contained dynaQ.app bundle..."
@@ -77,15 +92,22 @@ rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_BUNDLE/Contents/MacOS"
 mkdir -p "$APP_BUNDLE/Contents/Resources"
 mkdir -p "$APP_BUNDLE/Contents/Helpers"
+mkdir -p "$APP_BUNDLE/Contents/Frameworks"
+mkdir -p "$APP_BUNDLE/Contents/Resources/python"
 mkdir -p "$APP_BUNDLE/Contents/Resources/driver"
 
-# Executables
+# Executables & Native Helpers
 cp ".build/release/dynaQ" "$APP_BUNDLE/Contents/MacOS/dynaQ"
 cp ".build/release/dynaQ-router" "$APP_BUNDLE/Contents/Helpers/dynaQ-router"
 cp "$DIST_DIR/dynaq-cli" "$APP_BUNDLE/Contents/Helpers/dynaq-cli"
+cp "$DIST_DIR/dynaq-opt" "$APP_BUNDLE/Contents/Helpers/dynaq-opt"
+cp "$DIST_DIR/libdynaq_rust.dylib" "$APP_BUNDLE/Contents/Frameworks/libdynaq_rust.dylib"
+cp -R "$REPO_ROOT/python/dynaq" "$APP_BUNDLE/Contents/Resources/python/"
+
 chmod +x "$APP_BUNDLE/Contents/MacOS/dynaQ"
 chmod +x "$APP_BUNDLE/Contents/Helpers/dynaQ-router"
 chmod +x "$APP_BUNDLE/Contents/Helpers/dynaq-cli"
+chmod +x "$APP_BUNDLE/Contents/Helpers/dynaq-opt"
 
 # Icon
 cp "$DIST_DIR/AppIcon.icns" "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
@@ -176,6 +198,7 @@ PKG_SCRIPTS="$DIST_DIR/pkg_scripts"
 rm -rf "$PKG_ROOT" "$PKG_SCRIPTS" "$DIST_DIR/dynaQ-component.pkg" "$DIST_DIR/dynaQ-Installer.pkg"
 mkdir -p "$PKG_ROOT/Applications"
 mkdir -p "$PKG_ROOT/usr/local/bin"
+mkdir -p "$PKG_ROOT/usr/local/lib"
 mkdir -p "$PKG_ROOT/Library/Audio/Plug-Ins/HAL"
 mkdir -p "$PKG_ROOT/Library/LaunchAgents"
 mkdir -p "$PKG_SCRIPTS"
@@ -186,8 +209,21 @@ cp -R "$APP_BUNDLE" "$PKG_ROOT/Applications/"
 # 2. Install pre-compiled CLI tools to /usr/local/bin
 cp ".build/release/dynaQ" "$PKG_ROOT/usr/local/bin/dynaq"
 cp ".build/release/dynaQ-router" "$PKG_ROOT/usr/local/bin/dynaq-router"
+cp "$DIST_DIR/dynaq-opt" "$PKG_ROOT/usr/local/bin/dynaq-opt"
+cp "$DIST_DIR/libdynaq_rust.dylib" "$PKG_ROOT/usr/local/lib/libdynaq_rust.dylib"
+
+# Python Backend Launcher Script
+cat << 'BACKEND_EOF' > "$PKG_ROOT/usr/local/bin/dynaq-backend"
+#!/bin/sh
+export PYTHONPATH="/Applications/dynaQ.app/Contents/Resources/python:$PYTHONPATH"
+export DYNAQ_RUST_LIB="/Applications/dynaQ.app/Contents/Frameworks/libdynaq_rust.dylib"
+exec /usr/bin/python3 -m dynaq.cli "$@"
+BACKEND_EOF
+
 chmod +x "$PKG_ROOT/usr/local/bin/dynaq"
 chmod +x "$PKG_ROOT/usr/local/bin/dynaq-router"
+chmod +x "$PKG_ROOT/usr/local/bin/dynaq-opt"
+chmod +x "$PKG_ROOT/usr/local/bin/dynaq-backend"
 
 # 3. Install HAL Virtual Audio Driver to /Library/Audio/Plug-Ins/HAL
 cp -R "$DRIVER_BUNDLE" "$PKG_ROOT/Library/Audio/Plug-Ins/HAL/"
@@ -204,6 +240,8 @@ set -e
 chmod -R 755 /Applications/dynaQ.app 2>/dev/null || true
 chmod +x /usr/local/bin/dynaq 2>/dev/null || true
 chmod +x /usr/local/bin/dynaq-router 2>/dev/null || true
+chmod +x /usr/local/bin/dynaq-opt 2>/dev/null || true
+chmod +x /usr/local/bin/dynaq-backend 2>/dev/null || true
 
 # Configure HAL audio driver
 if [ -d "/Library/Audio/Plug-Ins/HAL/DynaQDriver.driver" ]; then
@@ -315,13 +353,16 @@ INSTALLATION OPTIONS:
    Double-click "Install dynaQ.pkg".
    This automatically installs:
      - dynaQ.app into /Applications
-     - dynaq & dynaq-router CLI commands into /usr/local/bin
+     - dynaq & dynaq-router CoreAudio CLI into /usr/local/bin
+     - dynaq-opt Rust Acoustic Optimizer into /usr/local/bin
+     - dynaq-backend Python Telemetry & SDK CLI into /usr/local/bin
+     - libdynaq_rust.dylib native SIMD engine into /usr/local/lib
      - CoreAudio Virtual Audio HAL Driver into /Library/Audio/Plug-Ins/HAL
      - Restarts CoreAudio automatically (no system reboot needed)
 
 2. DRAG-AND-DROP INSTALLATION:
    Drag "dynaQ.app" directly into the "Applications" shortcut.
-   The app is self-contained with embedded driver, docs, and routing daemon.
+   The app is self-contained with embedded driver, Rust optimizer, Python backend, docs, and routing daemon.
 
 3. UNINSTALLATION:
    Double-click "Uninstall dynaQ.command" to cleanly remove all components.
@@ -365,17 +406,35 @@ PACKAGE CONTENTS:
   • dynaQ-Installer.pkg    : Native macOS Automated Installer Package
   • SHA256SUMS.txt         : Cryptographic verification checksums
 
+WHATS NEW IN v${APP_VERSION}:
+  • Rust High-Throughput DSP Helper (dynaq-opt):
+      - Microsecond AutoEQ curve fitting using coordinate descent optimization
+      - Windowed sinc FIR filter generator (Blackman / Hann / Hamming)
+      - 4x oversampled true peak calculation (ITU-R BS.1770-4 Appendix 2)
+      - libdynaq_rust.dylib native C-ABI dynamic library
+  • Python Backend SDK & CLI (dynaq package & dynaq-backend):
+      - IPC bridge client connecting via /tmp/dynaq_ipc.sock and 127.0.0.1:9876
+      - Live telemetry streaming (peaks, LUFS, correlation, 64-bin FFT)
+      - Headless audio daemon server mode (python3 -m dynaq.server)
+      - Direct ctypes bridge to native Rust optimizer
+  • CoreAudio HAL & Driver Overhaul:
+      - Integrated non-blocking IPC server in dynaQ router
+      - Jury/Schur-Cohn IIR pole stability validation
+
 INSTALLATION:
   Method A: Double-click "dynaQ-Installer.pkg" (or open "dynaQ-Installer.dmg" and run "Install dynaQ.pkg")
             This automatically installs:
               - /Applications/dynaQ.app
               - /Library/Audio/Plug-Ins/HAL/DynaQDriver.driver (CoreAudio HAL Driver)
-              - /usr/local/bin/dynaq & dynaq-router (CLI tools)
+              - /usr/local/bin/dynaq & dynaq-router (CoreAudio CLI tools)
+              - /usr/local/bin/dynaq-opt (Rust Acoustic Optimizer CLI)
+              - /usr/local/bin/dynaq-backend (Python SDK & Telemetry CLI)
+              - /usr/local/lib/libdynaq_rust.dylib (Native Rust DSP engine)
               - Configures permissions and reloads CoreAudio daemon
             Plug-and-play: zero external dependencies, no brew or terminal setup required.
 
   Method B: Open "dynaQ-Installer.dmg" and drag "dynaQ.app" into Applications.
-            dynaQ is fully self-contained with embedded driver, docs, and routing daemon.
+            dynaQ is fully self-contained with embedded driver, Rust optimizer, Python SDK, docs, and routing daemon.
 
 MINIMUM REQUIREMENTS:
   • macOS 14.0 (Sonoma) or later

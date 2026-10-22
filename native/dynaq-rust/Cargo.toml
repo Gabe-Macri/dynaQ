@@ -1,0 +1,22 @@
+[package]
+name = "dynaq-rust"
+version = "1.0.0-beta.2"
+edition = "2021"
+authors = ["dynaQ Audio Team"]
+description = "High-performance Rust audio DSP helpers and acoustic optimization engine for dynaQ"
+
+[lib]
+name = "dynaq_rust"
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[[bin]]
+name = "dynaq-opt"
+path = "src/bin/dynaq_opt.rs"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = true
+
