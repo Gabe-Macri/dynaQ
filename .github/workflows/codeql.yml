@@ -1,0 +1,121 @@
+name: "CodeQL Advanced"
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  schedule:
+    - cron: '28 8 * * 2'
+
+jobs:
+  check-diff:
+    name: Check Diff Thresholds
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.diff-eval.outputs.should_run }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # fetch-depth: 0 retrieves the full commit history.
+          # Default is 1 (shallow), which leaves no ancestor commits to compare against.
+          fetch-depth: 0
+
+      - name: Calculate changes and evaluate criteria
+        id: diff-eval
+        shell: bash
+        run: |
+          # 1. Handle scheduled cron runs (no diff exists; allow periodic scan)
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "Scheduled run: bypassing diff threshold check."
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # 2. Determine base comparison ref
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            # Three dots (A...B) diffs from the common ancestor to the PR head
+            DIFF_TARGET="${{ github.event.pull_request.base.sha }}...HEAD"
+          else
+            # On direct push, compare the previous commit against current HEAD
+            BASE="${{ github.event.before }}"
+            if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+              BASE="HEAD~1"
+            fi
+            DIFF_TARGET="$BASE..HEAD"
+          fi
+
+          # 3. Calculate total lines changed (additions + deletions)
+          # --numstat outputs: <added>\t<deleted>\t<path>
+          LINES_CHANGED=$(git diff --numstat $DIFF_TARGET | awk '{add+=$1; del+=$2} END {print add+del}')
+          LINES_CHANGED=${LINES_CHANGED:-0}
+
+          # 4. Calculate count of newly added files
+          # --diff-filter=A restricts output exclusively to Added files (ignoring Modified or Deleted)
+          FILES_ADDED=$(git diff --name-only --diff-filter=A $DIFF_TARGET | grep -c -v '^$' || true)
+          FILES_ADDED=${FILES_ADDED:-0}
+
+          echo "Lines changed: $LINES_CHANGED"
+          echo "Files added:   $FILES_ADDED"
+
+          # 5. Evaluate condition: < 1000 lines changed OR < 5 files added
+          if [ "$LINES_CHANGED" -lt 1000 ] || [ "$FILES_ADDED" -lt 5 ]; then
+            echo "Condition met. Triggering analysis."
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Thresholds exceeded. Skipping analysis."
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    needs: check-diff
+    if: needs.check-diff.outputs.should_run == 'true'
+    runs-on: ${{ (matrix.language == 'swift' && 'macos-latest') || 'ubuntu-latest' }}
+    permissions:
+      security-events: write
+      packages: read
+      actions: read
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - language: actions
+          build-mode: none
+        - language: c-cpp
+          build-mode: none
+        - language: javascript-typescript
+          build-mode: none
+        - language: ruby
+          build-mode: none
+        - language: swift
+          build-mode: autobuild
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Initialize CodeQL
+      uses: github/codeql-action/init@v4
+      with:
+        languages: ${{ matrix.language }}
+        build-mode: ${{ matrix.build-mode }}
+
+    - name: Run manual build steps
+      if: matrix.build-mode == 'manual'
+      shell: bash
+      run: |
+        echo 'If you are using a "manual" build mode for one or more of the' \
+          'languages you are analyzing, replace this with the commands to build' \
+          'your code, for example:'
+        echo '  make bootstrap'
+        echo '  make release'
+        exit 1
+
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v4
+      with:
+        category: "/language:${{matrix.language}}"
