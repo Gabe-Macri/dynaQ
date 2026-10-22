@@ -1,5 +1,5 @@
 import XCTest
-@testable import DynaQDSP
+@testable import DynaQAnalysis
 
 final class SpectrumAnalyzerTests: XCTestCase {
 

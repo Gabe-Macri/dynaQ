@@ -2,6 +2,8 @@ import AppKit
 import SwiftUI
 import DynaQCore
 import DynaQDSP
+import DynaQDynamics
+import DynaQAnalysis
 import DynaQAudioDriver
 
 // MARK: - CLI Mode Handlers

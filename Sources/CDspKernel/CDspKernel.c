@@ -205,6 +205,17 @@ void c_eq_engine_reset_state(c_eq_engine_t* eq) {
     }
 }
 
+bool c_biquad_is_stable(c_biquad_coeffs_t coeffs) {
+    if (isnan(coeffs.a1) || isnan(coeffs.a2) || isinf(coeffs.a1) || isinf(coeffs.a2)) {
+        return false;
+    }
+    // Jury stability criteria for second-order discrete system 1 + a1*z^-1 + a2*z^-2 = 0
+    if (fabsf(coeffs.a2) >= 0.9999f) return false;
+    if (1.0f + coeffs.a1 + coeffs.a2 <= 0.0001f) return false;
+    if (1.0f - coeffs.a1 + coeffs.a2 <= 0.0001f) return false;
+    return true;
+}
+
 void c_eq_engine_set_band(c_eq_engine_t* eq, int index, c_biquad_coeffs_t coeffs, int routing, bool enabled, bool immediate) {
     if (!eq || index < 0 || index >= C_DSP_MAX_BANDS) return;
     eq->bands[index].target = coeffs;
@@ -216,6 +227,15 @@ void c_eq_engine_set_band(c_eq_engine_t* eq, int index, c_biquad_coeffs_t coeffs
     if (index >= eq->band_count) {
         eq->band_count = index + 1;
     }
+}
+
+c_dsp_status_t c_eq_engine_set_band_safe(c_eq_engine_t* eq, int index, c_biquad_coeffs_t coeffs, int routing, bool enabled, bool immediate) {
+    if (!eq) return C_DSP_ERR_NULL_POINTER;
+    if (index < 0 || index >= C_DSP_MAX_BANDS) return C_DSP_ERR_INVALID_PARAM;
+    if (!c_biquad_is_stable(coeffs)) return C_DSP_ERR_UNSTABLE_FILTER;
+
+    c_eq_engine_set_band(eq, index, coeffs, routing, enabled, immediate);
+    return C_DSP_OK;
 }
 
 void c_eq_engine_set_gains(c_eq_engine_t* eq, float preamp_gain_linear, float master_gain_linear) {
@@ -444,6 +464,114 @@ void c_dsp_limiter_process_stereo(float* left, float* right, size_t count, float
     }
 }
 
+// ----------------------------------------------------------------------------
+// Dedicated Lookahead True-Peak Limiter with Circular Delay Line
+// ----------------------------------------------------------------------------
+
+struct c_lookahead_limiter {
+    float* delay_left;
+    float* delay_right;
+    size_t capacity;
+    size_t write_pos;
+    size_t lookahead;
+    float current_gain;
+    float attack_coeff;
+    float release_coeff;
+    float ceiling;
+};
+
+c_lookahead_limiter_t* c_lookahead_limiter_create(size_t lookahead_samples, float sample_rate, float ceiling_linear) {
+    c_lookahead_limiter_t* lim = (c_lookahead_limiter_t*)malloc(sizeof(c_lookahead_limiter_t));
+    if (!lim) return NULL;
+
+    size_t look = lookahead_samples > 0 ? lookahead_samples : 48;
+    if (look > 1024) look = 1024;
+    lim->lookahead = look;
+    lim->capacity = look * 4;
+    lim->write_pos = 0;
+    lim->delay_left = (float*)calloc(lim->capacity, sizeof(float));
+    lim->delay_right = (float*)calloc(lim->capacity, sizeof(float));
+    lim->current_gain = 1.0f;
+    lim->ceiling = ceiling_linear > 0.05f ? ceiling_linear : 0.9772f;
+
+    float sr = sample_rate > 8000.0f ? sample_rate : 48000.0f;
+    float attack_ms = 1.0f;
+    float release_ms = 50.0f;
+    lim->attack_coeff = expf(-1.0f / (0.001f * attack_ms * sr));
+    lim->release_coeff = expf(-1.0f / (0.001f * release_ms * sr));
+
+    return lim;
+}
+
+void c_lookahead_limiter_destroy(c_lookahead_limiter_t* lim) {
+    if (!lim) return;
+    if (lim->delay_left) free(lim->delay_left);
+    if (lim->delay_right) free(lim->delay_right);
+    free(lim);
+}
+
+void c_lookahead_limiter_reset(c_lookahead_limiter_t* lim) {
+    if (!lim) return;
+    if (lim->delay_left) memset(lim->delay_left, 0, lim->capacity * sizeof(float));
+    if (lim->delay_right) memset(lim->delay_right, 0, lim->capacity * sizeof(float));
+    lim->write_pos = 0;
+    lim->current_gain = 1.0f;
+}
+
+void c_lookahead_limiter_set_ceiling(c_lookahead_limiter_t* lim, float ceiling_linear) {
+    if (!lim) return;
+    lim->ceiling = ceiling_linear > 0.05f ? ceiling_linear : 0.9772f;
+}
+
+void c_lookahead_limiter_process(c_lookahead_limiter_t* lim, float* left, float* right, size_t count) {
+    if (!lim || !left || !right || count == 0) return;
+
+    const size_t cap = lim->capacity;
+    const size_t look = lim->lookahead;
+    const float ceil = lim->ceiling;
+    const float att = lim->attack_coeff;
+    const float rel = lim->release_coeff;
+
+    for (size_t i = 0; i < count; i++) {
+        float in_l = left[i];
+        float in_r = right[i];
+
+        // Store new sample in circular delay line
+        size_t w = lim->write_pos;
+        lim->delay_left[w] = in_l;
+        lim->delay_right[w] = in_r;
+
+        // Peak detector looks ahead at incoming sample
+        float peak = fmaxf(fabsf(in_l), fabsf(in_r));
+        float target_gain = (peak > ceil && peak > 1e-9f) ? (ceil / peak) : 1.0f;
+
+        // Smooth gain computer (ballistics)
+        if (target_gain < lim->current_gain) {
+            lim->current_gain = target_gain + att * (lim->current_gain - target_gain);
+        } else {
+            lim->current_gain = target_gain + rel * (lim->current_gain - target_gain);
+        }
+
+        // Read delayed sample from buffer
+        size_t r = (w + cap - look) % cap;
+        float out_l = lim->delay_left[r] * lim->current_gain;
+        float out_r = lim->delay_right[r] * lim->current_gain;
+
+        // Stereo-linked inter-sample ceiling safety clamp (preserves stereo balance)
+        float max_out = fmaxf(fabsf(out_l), fabsf(out_r));
+        if (max_out > ceil && max_out > 1e-9f) {
+            float safety_gain = ceil / max_out;
+            out_l *= safety_gain;
+            out_r *= safety_gain;
+        }
+
+        left[i] = out_l;
+        right[i] = out_r;
+
+        lim->write_pos = (w + 1) % cap;
+    }
+}
+
 // ============================================================================
 // 5. Accelerate-Powered Telemetry: Peak, RMS & Clip Measurement
 // ============================================================================
@@ -517,6 +645,26 @@ void c_dsp_measure_loudness(
 
     result->clip_left = inout_clip_l ? *inout_clip_l : false;
     result->clip_right = inout_clip_r ? *inout_clip_r : false;
+}
+
+float c_dsp_measure_phase_correlation(const float* left, const float* right, size_t count) {
+    if (!left || !right || count == 0) return 1.0f;
+    float sum_lr = 0.0f;
+    float sum_l2 = 0.0f;
+    float sum_r2 = 0.0f;
+    for (size_t i = 0; i < count; i++) {
+        float l = left[i];
+        float r = right[i];
+        sum_lr += l * r;
+        sum_l2 += l * l;
+        sum_r2 += r * r;
+    }
+    float denom = sqrtf(sum_l2 * sum_r2);
+    if (denom < 1e-9f) return 1.0f; // Silence is correlated
+    float corr = sum_lr / denom;
+    if (corr > 1.0f) corr = 1.0f;
+    if (corr < -1.0f) corr = -1.0f;
+    return corr;
 }
 
 // ============================================================================

@@ -1,6 +1,7 @@
 import Foundation
 import Accelerate
 import DynaQCore
+import DynaQDynamics
 import CDspKernel
 
 /// Core DSP Engine executing multi-band parametric, dynamic, and Mid/Side equalization.
