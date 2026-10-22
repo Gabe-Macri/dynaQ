@@ -114,4 +114,85 @@ final class BiquadFilterTests: XCTestCase {
         let index3k = freqs.firstIndex(of: 3200.0)!
         XCTAssertGreaterThan(responses[index3k], 1.0, "Harman curve should have positive gain around 3.2 kHz.")
     }
+
+    func testFrequencyModulationLFOUpdatesBandFrequency() {
+        var band = EQBand(index: 0, frequency: 1000.0, gain: 6.0, q: 2.0, filterType: .bell)
+        band.isFMEnabled = true
+        band.fmMode = .lfo
+        band.fmRate = 4.0 // 4 Hz LFO
+        band.fmDepth = 1.0 // 1 octave sweep (500 Hz to 2000 Hz)
+
+        let profile = EQProfile(name: "FM Test", bands: [band])
+        let engine = ParametricEQEngine(profile: profile, sampleRate: 48000.0)
+
+        var left = [Float](repeating: 0.1, count: 512)
+        var right = [Float](repeating: 0.1, count: 512)
+
+        left.withUnsafeMutableBufferPointer { lPtr in
+            right.withUnsafeMutableBufferPointer { rPtr in
+                engine.processStereo(left: lPtr.baseAddress!, right: rPtr.baseAddress!, count: 512)
+            }
+        }
+
+        let liveF = engine.getModulatedFrequency(forBandIndex: 0)
+        XCTAssertNotEqual(liveF, 0.0, "Modulated frequency must be non-zero.")
+        XCTAssertGreaterThanOrEqual(liveF, 500.0, "FM LFO sweep should stay within depth lower bound.")
+        XCTAssertLessThanOrEqual(liveF, 2000.0, "FM LFO sweep should stay within depth upper bound.")
+    }
+
+    func testBandSoloIsolatesTargetBand() {
+        let band1 = EQBand(index: 0, frequency: 100.0, gain: -18.0, q: 2.0, filterType: .bell)
+        var band2 = EQBand(index: 1, frequency: 5000.0, gain: 12.0, q: 2.0, filterType: .bell)
+        band2.isSolo = true // Solo band 2
+
+        let profile = EQProfile(name: "Solo Test", bands: [band1, band2])
+        let engine = ParametricEQEngine(profile: profile, sampleRate: 48000.0)
+
+        // Evaluate curve: band 1 (-18dB) should be ignored because band 2 is soloed
+        let curve = engine.evaluateCompositeResponse(at: [100.0, 5000.0])
+        XCTAssertEqual(curve[0], 0.0, accuracy: 0.5, "Non-soloed band should be muted in composite evaluation.")
+        XCTAssertGreaterThan(curve[1], 10.0, "Soloed band should remain active.")
+    }
+
+    func testHeadroomBufferPreventsHardRailClipping() {
+        let band = EQBand(index: 0, frequency: 1000.0, gain: 18.0, q: 1.0, filterType: .bell)
+        let profile = EQProfile(name: "High Gain Boost", bands: [band], masterGain: 6.0)
+        let engine = ParametricEQEngine(profile: profile, sampleRate: 48000.0)
+        engine.isHeadroomGuardEnabled = true
+
+        // Feed hot signal (0.8 peak) which boosted by 24 dB would exceed 1.0 significantly
+        var left = [Float](repeating: 0.8, count: 256)
+        var right = [Float](repeating: 0.8, count: 256)
+
+        left.withUnsafeMutableBufferPointer { lPtr in
+            right.withUnsafeMutableBufferPointer { rPtr in
+                engine.processStereo(left: lPtr.baseAddress!, right: rPtr.baseAddress!, count: 256)
+            }
+        }
+
+        for i in 0..<256 {
+            XCTAssertLessThanOrEqual(abs(left[i]), 1.05, "Headroom guard must prevent uncontained rail explosions.")
+            XCTAssertLessThanOrEqual(abs(right[i]), 1.05, "Headroom guard must prevent uncontained rail explosions.")
+        }
+    }
+
+    func testEQBandFMSerializationAndDefaults() throws {
+        var band = EQBand(index: 0, frequency: 2500.0, gain: 3.0, q: 1.5, filterType: .bell)
+        band.isFMEnabled = true
+        band.fmMode = .lfo
+        band.fmDepth = 1.5
+        band.fmRate = 2.5
+
+        let encoder = JSONEncoder()
+        let data = try encoder.encode(band)
+
+        let decoder = JSONDecoder()
+        let decoded = try decoder.decode(EQBand.self, from: data)
+
+        XCTAssertEqual(decoded.frequency, 2500.0)
+        XCTAssertTrue(decoded.isFMEnabled)
+        XCTAssertEqual(decoded.fmMode, FMMode.lfo)
+        XCTAssertEqual(decoded.fmDepth, 1.5, accuracy: 0.01)
+        XCTAssertEqual(decoded.fmRate, 2.5, accuracy: 0.01)
+    }
 }

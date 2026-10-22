@@ -11,6 +11,7 @@ public final class CoreAudioManager: @unchecked Sendable {
     public var onDefaultOutputChanged: ((AudioDevice?) -> Void)?
     public var onDefaultInputChanged: ((AudioDevice?) -> Void)?
     public var onSampleRateChanged: ((AudioDeviceID, Double) -> Void)?
+    public var onProcessesChanged: (() -> Void)?
     private var observedSampleRateDeviceID: AudioDeviceID? = nil
 
     public init() {
@@ -400,6 +401,15 @@ public final class CoreAudioManager: @unchecked Sendable {
             let devs = self.fetchAllDevices()
             let matched = devs.first(where: { $0.id == defaultId })
             self.onDefaultInputChanged?(matched)
+        }
+
+        var processAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyProcessObjectList,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &processAddress, nil) { [weak self] _, _ in
+            self?.onProcessesChanged?()
         }
     }
 }

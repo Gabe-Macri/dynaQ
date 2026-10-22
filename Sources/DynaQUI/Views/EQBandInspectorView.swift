@@ -3,10 +3,20 @@ import DynaQCore
 import DynaQDSP
 
 /// Detailed inspector and editor for the selected equalizer band.
-/// Minimal Brutalist Terminal Aesthetic: monospace typography, sharp 1px borders, precision parameter scrubbing.
+/// Minimal Brutalist Terminal Aesthetic: monospace typography, sharp 1px borders, precision parameter scrubbing,
+/// dynamic gain compression, and real-time Frequency Modulation (FM EQ).
 public struct EQBandInspectorView: View {
     @Binding public var profile: EQProfile
     @Binding public var selectedBandID: UUID?
+
+    @State private var activeModulationTab: ModulationTab = .frequencyModulation
+
+    private enum ModulationTab: String, CaseIterable, Identifiable {
+        case frequencyModulation = "FM EQ (FREQ MOD)"
+        case dynamicGain = "DYNAMIC GAIN"
+
+        var id: String { rawValue }
+    }
 
     public init(profile: Binding<EQProfile>, selectedBandID: Binding<UUID?>) {
         self._profile = profile
@@ -38,6 +48,11 @@ public struct EQBandInspectorView: View {
                             Text(band.routing.shortBadge)
                                 .font(.system(size: 7, weight: .heavy, design: .monospaced))
                                 .foregroundColor(bandColor)
+                            if band.isFMEnabled {
+                                Text("FM")
+                                    .font(.system(size: 6, weight: .heavy, design: .monospaced))
+                                    .foregroundColor(DynaQTheme.terminalCyan)
+                            }
                         }
                         .padding(.horizontal, 6)
                         .padding(.vertical, 4)
@@ -83,7 +98,7 @@ public struct EQBandInspectorView: View {
                 let color = DynaQTheme.bandColors[idx % DynaQTheme.bandColors.count]
 
                 HStack(alignment: .top, spacing: 14) {
-                    // Left Column: Filter Shape, Channel Routing, Knobs
+                    // Left Column: Filter Shape, Channel Routing, Precision Knobs
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(spacing: 8) {
                             // Filter Type Menu
@@ -142,7 +157,7 @@ public struct EQBandInspectorView: View {
                             Button(action: {
                                 bandBinding.wrappedValue.isSolo.toggle()
                             }) {
-                                Text("[ SOLO ]")
+                                Text(band.isSolo ? "[ SOLO: ON ]" : "[ SOLO ]")
                                     .font(.system(size: 8, weight: .heavy, design: .monospaced))
                                     .padding(.horizontal, 6)
                                     .padding(.vertical, 4)
@@ -187,8 +202,8 @@ public struct EQBandInspectorView: View {
                             }
                         }
 
-                        // Terminal Precision Knobs
-                        HStack(spacing: 8) {
+                        // Terminal Precision Knobs (Logarithmic Frequency Scrubbing)
+                        HStack(spacing: 10) {
                             RotaryKnob(
                                 title: "Frequency",
                                 value: bandBinding.frequency,
@@ -221,61 +236,170 @@ public struct EQBandInspectorView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                    // Right Column: Dynamic EQ Section
+                    // Right Column: Modulation Module (Frequency Modulation FM vs Dynamic Gain)
                     VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            Text("// DYNAMIC EQ MODULE")
-                                .font(.system(size: 8, weight: .heavy, design: .monospaced))
-                                .foregroundColor(band.isDynamic ? DynaQTheme.phosphorAmber : DynaQTheme.textMuted)
-                            Spacer()
-                            Button(action: {
-                                bandBinding.wrappedValue.isDynamic.toggle()
-                            }) {
-                                Text(band.isDynamic ? "[ ACTIVE ]" : "[ OFF ]")
-                                    .font(.system(size: 8, weight: .heavy, design: .monospaced))
+                        // Modulation Mode Selector Tab Strip
+                        HStack(spacing: 4) {
+                            Button(action: { activeModulationTab = .frequencyModulation }) {
+                                Text("FM EQ")
+                                    .font(.system(size: 8, weight: activeModulationTab == .frequencyModulation ? .heavy : .bold, design: .monospaced))
                                     .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
-                                    .background(band.isDynamic ? DynaQTheme.phosphorAmber : DynaQTheme.surfaceElevated)
-                                    .foregroundColor(band.isDynamic ? .black : DynaQTheme.textMuted)
+                                    .padding(.vertical, 3)
+                                    .background(activeModulationTab == .frequencyModulation ? DynaQTheme.terminalCyan.opacity(0.2) : DynaQTheme.surfaceElevated)
+                                    .foregroundColor(activeModulationTab == .frequencyModulation ? DynaQTheme.terminalCyan : DynaQTheme.textMuted)
                                     .overlay(
-                                        Rectangle().stroke(band.isDynamic ? DynaQTheme.phosphorAmber : DynaQTheme.surfaceBorder, lineWidth: 1)
+                                        Rectangle().stroke(activeModulationTab == .frequencyModulation ? DynaQTheme.terminalCyan : DynaQTheme.surfaceBorder, lineWidth: 1)
                                     )
                             }
                             .buttonStyle(.plain)
+
+                            Button(action: { activeModulationTab = .dynamicGain }) {
+                                Text("DYN GAIN")
+                                    .font(.system(size: 8, weight: activeModulationTab == .dynamicGain ? .heavy : .bold, design: .monospaced))
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 3)
+                                    .background(activeModulationTab == .dynamicGain ? DynaQTheme.phosphorAmber.opacity(0.2) : DynaQTheme.surfaceElevated)
+                                    .foregroundColor(activeModulationTab == .dynamicGain ? DynaQTheme.phosphorAmber : DynaQTheme.textMuted)
+                                    .overlay(
+                                        Rectangle().stroke(activeModulationTab == .dynamicGain ? DynaQTheme.phosphorAmber : DynaQTheme.surfaceBorder, lineWidth: 1)
+                                    )
+                            }
+                            .buttonStyle(.plain)
+
+                            Spacer()
+
+                            // Master Modulation Toggle
+                            if activeModulationTab == .frequencyModulation {
+                                Button(action: {
+                                    bandBinding.wrappedValue.isFMEnabled.toggle()
+                                }) {
+                                    Text(band.isFMEnabled ? "[ FM: ON ]" : "[ FM: OFF ]")
+                                        .font(.system(size: 8, weight: .heavy, design: .monospaced))
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(band.isFMEnabled ? DynaQTheme.terminalCyan : DynaQTheme.surfaceElevated)
+                                        .foregroundColor(band.isFMEnabled ? .black : DynaQTheme.textMuted)
+                                        .overlay(
+                                            Rectangle().stroke(band.isFMEnabled ? DynaQTheme.terminalCyan : DynaQTheme.surfaceBorder, lineWidth: 1)
+                                        )
+                                }
+                                .buttonStyle(.plain)
+                            } else {
+                                Button(action: {
+                                    bandBinding.wrappedValue.isDynamic.toggle()
+                                }) {
+                                    Text(band.isDynamic ? "[ DYN: ON ]" : "[ DYN: OFF ]")
+                                        .font(.system(size: 8, weight: .heavy, design: .monospaced))
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(band.isDynamic ? DynaQTheme.phosphorAmber : DynaQTheme.surfaceElevated)
+                                        .foregroundColor(band.isDynamic ? .black : DynaQTheme.textMuted)
+                                        .overlay(
+                                            Rectangle().stroke(band.isDynamic ? DynaQTheme.phosphorAmber : DynaQTheme.surfaceBorder, lineWidth: 1)
+                                        )
+                                }
+                                .buttonStyle(.plain)
+                            }
                         }
 
-                        if band.isDynamic {
-                            HStack(spacing: 6) {
-                                RotaryKnob(
-                                    title: "Threshold",
-                                    value: bandBinding.dynamicThreshold,
-                                    range: -60...0,
-                                    defaultValue: -18.0,
-                                    unit: "dB",
-                                    tintColor: DynaQTheme.phosphorAmber
-                                )
-                                RotaryKnob(
-                                    title: "Dyn Range",
-                                    value: bandBinding.dynamicRange,
-                                    range: -18...18,
-                                    defaultValue: -6.0,
-                                    unit: "dB",
-                                    tintColor: DynaQTheme.phosphorAmber
-                                )
-                                RotaryKnob(
-                                    title: "Ratio",
-                                    value: bandBinding.dynamicRatio,
-                                    range: 1.0...10.0,
-                                    defaultValue: 2.0,
-                                    unit: ":1",
-                                    tintColor: DynaQTheme.phosphorAmber
-                                )
+                        // Tab 1: Frequency Modulation (FM EQ)
+                        if activeModulationTab == .frequencyModulation {
+                            if band.isFMEnabled {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    HStack(spacing: 4) {
+                                        Button(action: { bandBinding.wrappedValue.fmMode = .envelope }) {
+                                            Text("[ ENV TRACK ]")
+                                                .font(.system(size: 8, weight: band.fmMode == .envelope ? .heavy : .bold, design: .monospaced))
+                                                .padding(.horizontal, 5)
+                                                .padding(.vertical, 2)
+                                                .background(band.fmMode == .envelope ? DynaQTheme.terminalCyan.opacity(0.2) : DynaQTheme.surfaceElevated)
+                                                .foregroundColor(band.fmMode == .envelope ? DynaQTheme.terminalCyan : DynaQTheme.textMuted)
+                                        }
+                                        .buttonStyle(.plain)
+
+                                        Button(action: { bandBinding.wrappedValue.fmMode = .lfo }) {
+                                            Text("[ LFO SWEEP ]")
+                                                .font(.system(size: 8, weight: band.fmMode == .lfo ? .heavy : .bold, design: .monospaced))
+                                                .padding(.horizontal, 5)
+                                                .padding(.vertical, 2)
+                                                .background(band.fmMode == .lfo ? DynaQTheme.terminalCyan.opacity(0.2) : DynaQTheme.surfaceElevated)
+                                                .foregroundColor(band.fmMode == .lfo ? DynaQTheme.terminalCyan : DynaQTheme.textMuted)
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+
+                                    HStack(spacing: 8) {
+                                        RotaryKnob(
+                                            title: "Depth",
+                                            value: bandBinding.fmDepth,
+                                            range: -3.0...3.0,
+                                            defaultValue: 0.5,
+                                            unit: "Oct",
+                                            tintColor: DynaQTheme.terminalCyan
+                                        )
+
+                                        if band.fmMode == .lfo {
+                                            RotaryKnob(
+                                                title: "LFO Rate",
+                                                value: bandBinding.fmRate,
+                                                range: 0.1...20.0,
+                                                defaultValue: 1.0,
+                                                unit: "Hz",
+                                                tintColor: DynaQTheme.terminalCyan
+                                            )
+                                        } else {
+                                            RotaryKnob(
+                                                title: "Thresh",
+                                                value: bandBinding.dynamicThreshold,
+                                                range: -60...0,
+                                                defaultValue: -18.0,
+                                                unit: "dB",
+                                                tintColor: DynaQTheme.terminalCyan
+                                            )
+                                        }
+                                    }
+                                }
+                            } else {
+                                Text("Dynamic Frequency Modulation (FM EQ): Center frequency dynamically shifts based on signal envelope or periodic LFO sweep.")
+                                    .font(.system(size: 8, design: .monospaced))
+                                    .foregroundColor(DynaQTheme.textMuted)
+                                    .padding(.top, 4)
                             }
                         } else {
-                            Text("Automatic transient gain modulation reacting in real time to peaks above threshold.")
-                                .font(.system(size: 9, design: .monospaced))
-                                .foregroundColor(DynaQTheme.textMuted)
-                                .padding(.top, 6)
+                            // Tab 2: Dynamic Gain Compression
+                            if band.isDynamic {
+                                HStack(spacing: 6) {
+                                    RotaryKnob(
+                                        title: "Threshold",
+                                        value: bandBinding.dynamicThreshold,
+                                        range: -60...0,
+                                        defaultValue: -18.0,
+                                        unit: "dB",
+                                        tintColor: DynaQTheme.phosphorAmber
+                                    )
+                                    RotaryKnob(
+                                        title: "Dyn Range",
+                                        value: bandBinding.dynamicRange,
+                                        range: -18...18,
+                                        defaultValue: -6.0,
+                                        unit: "dB",
+                                        tintColor: DynaQTheme.phosphorAmber
+                                    )
+                                    RotaryKnob(
+                                        title: "Ratio",
+                                        value: bandBinding.dynamicRatio,
+                                        range: 1.0...10.0,
+                                        defaultValue: 2.0,
+                                        unit: ":1",
+                                        tintColor: DynaQTheme.phosphorAmber
+                                    )
+                                }
+                            } else {
+                                Text("Dynamic gain reduction responding in real time to peaks exceeding threshold.")
+                                    .font(.system(size: 8, design: .monospaced))
+                                    .foregroundColor(DynaQTheme.textMuted)
+                                    .padding(.top, 4)
+                            }
                         }
                     }
                     .padding(8)
@@ -283,7 +407,7 @@ public struct EQBandInspectorView: View {
                     .overlay(
                         Rectangle().stroke(DynaQTheme.surfaceBorder, lineWidth: 1)
                     )
-                    .frame(width: 234)
+                    .frame(width: 270)
                 }
             }
         }

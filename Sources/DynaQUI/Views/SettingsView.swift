@@ -235,7 +235,8 @@ public struct SettingsView: View {
                 alignment: .top
             )
         }
-        .frame(width: 720, height: 520)
+        .frame(minWidth: 780, idealWidth: 820, maxWidth: 960, minHeight: 600, idealHeight: 650, maxHeight: 820)
+        .padding(12)
         .background(DynaQTheme.bg)
         .overlay(
             Rectangle().stroke(DynaQTheme.surfaceBorder, lineWidth: 1)
@@ -538,6 +539,29 @@ public struct SettingsView: View {
             Text(isLiveMode ? "// ZERO LATENCY (0 SAMPLES LOOKAHEAD): INSTANTANEOUS PEAK CLAMPING FOR LOGIC PRO / DAW TRACKING" : "// STUDIO MASTERING: 32-SAMPLE CIRCULAR DELAY LINE WITH 4X OVERSAMPLED TRUE PEAK GUARD")
                 .font(.system(size: 8, design: .monospaced))
                 .foregroundColor(DynaQTheme.textMuted)
+
+            sectionHeader("HEADROOM BUFFER & ANTI-CLIP SATURATION")
+
+            HStack(spacing: 8) {
+                HStack(spacing: 6) {
+                    Rectangle()
+                        .fill(DynaQTheme.phosphorGreen)
+                        .frame(width: 6, height: 6)
+                    Text("HEADROOM BUFFER: ACTIVE (+3.0 dB SATURATION GUARD)")
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .foregroundColor(DynaQTheme.phosphorGreen)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(DynaQTheme.surface)
+                .overlay(
+                    Rectangle().stroke(DynaQTheme.phosphorGreen.opacity(0.6), lineWidth: 1)
+                )
+            }
+
+            Text("// RATIONAL SOFT-KNEE SATURATION DISSIPATES EXCESS RESONANCE FROM HIGH-GAIN EQ BOOSTS BEFORE CLIPPING")
+                .font(.system(size: 8, design: .monospaced))
+                .foregroundColor(DynaQTheme.textMuted)
         }
     }
 
@@ -670,37 +694,35 @@ public struct SettingsView: View {
                 .buttonStyle(.plain)
             }
 
-            sectionHeader("DIAGNOSTIC LOG STREAM")
+            sectionHeader("DIAGNOSTIC LOG STREAM (RECENT TELEMETRY)")
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 3) {
-                    if diagnosticLogs.isEmpty {
-                        Text("// NO RECENT DIAGNOSTIC EVENTS RECORDED")
-                            .font(.system(size: 8, design: .monospaced))
-                            .foregroundColor(DynaQTheme.textMuted)
-                            .padding(8)
-                    } else {
-                        ForEach(Array(diagnosticLogs.enumerated()), id: \.offset) { _, log in
-                            HStack(spacing: 6) {
-                                Text(log.timestamp)
-                                    .font(.system(size: 8, design: .monospaced))
-                                    .foregroundColor(DynaQTheme.textMuted)
+            VStack(alignment: .leading, spacing: 3) {
+                if diagnosticLogs.isEmpty {
+                    Text("// NO RECENT DIAGNOSTIC EVENTS RECORDED")
+                        .font(.system(size: 8, design: .monospaced))
+                        .foregroundColor(DynaQTheme.textMuted)
+                        .padding(8)
+                } else {
+                    ForEach(Array(diagnosticLogs.suffix(24).enumerated()), id: \.offset) { _, log in
+                        HStack(spacing: 6) {
+                            Text(log.timestamp)
+                                .font(.system(size: 8, design: .monospaced))
+                                .foregroundColor(DynaQTheme.textMuted)
 
-                                Text("[\(log.level)]")
-                                    .font(.system(size: 8, weight: .bold, design: .monospaced))
-                                    .foregroundColor(levelColor(log.level))
+                            Text("[\(log.level)]")
+                                .font(.system(size: 8, weight: .bold, design: .monospaced))
+                                .foregroundColor(levelColor(log.level))
 
-                                Text(log.message)
-                                    .font(.system(size: 8, design: .monospaced))
-                                    .foregroundColor(DynaQTheme.textPrimary)
-                            }
+                            Text(log.message)
+                                .font(.system(size: 8, design: .monospaced))
+                                .foregroundColor(DynaQTheme.textPrimary)
+                                .lineLimit(1)
                         }
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(8)
             }
-            .frame(height: 140)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(10)
             .background(Color.black)
             .overlay(
                 Rectangle().stroke(DynaQTheme.surfaceBorder, lineWidth: 1)

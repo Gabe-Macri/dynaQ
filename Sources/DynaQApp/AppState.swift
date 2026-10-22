@@ -118,12 +118,7 @@ public final class AppState: ObservableObject {
         self.dspPipeline = ClientDSPPipeline(initialProfile: initial, sampleRate: defOutRate)
         self.engineManager.client = dspPipeline
 
-        self.appRoutes = [
-            AppAudioRoute(bundleIdentifier: "com.apple.Music", appName: "Apple Music", volume: 1.0),
-            AppAudioRoute(bundleIdentifier: "com.spotify.client", appName: "Spotify", volume: 1.0),
-            AppAudioRoute(bundleIdentifier: "com.apple.logic10", appName: "Logic Pro", volume: 1.0),
-            AppAudioRoute(bundleIdentifier: "com.google.Chrome", appName: "Google Chrome", volume: 0.85)
-        ]
+        self.appRoutes = []
 
         setupAudioEngineBindings()
         refreshHardwareDevices()
@@ -239,7 +234,11 @@ public final class AppState: ObservableObject {
                         "gain": b.gain,
                         "q": b.q,
                         "type": b.filterType.rawValue,
-                        "enabled": b.isEnabled
+                        "enabled": b.isEnabled,
+                        "is_fm_enabled": b.isFMEnabled,
+                        "fm_mode": b.fmMode.rawValue,
+                        "fm_depth": b.fmDepth,
+                        "fm_rate": b.fmRate
                     ]
                 }
                 return [
@@ -282,6 +281,15 @@ public final class AppState: ObservableObject {
                     }
                     if let en = params["is_enabled"] as? Bool {
                         self.currentProfile.bands[idx].isEnabled = en
+                    }
+                    if let fm = params["is_fm_enabled"] as? Bool {
+                        self.currentProfile.bands[idx].isFMEnabled = fm
+                    }
+                    if let depth = params["fm_depth"] as? Double {
+                        self.currentProfile.bands[idx].fmDepth = Float(depth)
+                    }
+                    if let rate = params["fm_rate"] as? Double {
+                        self.currentProfile.bands[idx].fmRate = Float(rate)
                     }
                     self.syncProfileToEngine(self.currentProfile)
                 }
@@ -425,8 +433,16 @@ public final class AppState: ObservableObject {
             let outID = selectedOutputDevice?.id ?? coreAudioManager.getDefaultOutputDeviceID()
             try engineManager.start(captureSource: captureSource, inputDeviceID: inID, outputDeviceID: outID)
             isEngineOnline = true
-            let appName = tapAllProcesses ? "All System Audio" : (selectedAudioApp?.name ?? "System Audio")
-            statusMessage = captureSource == .systemAudio ? "Equalizing: \(appName)" : "Hardware Mic Active"
+            var isWaiting = false
+            if #available(macOS 14.2, *) {
+                isWaiting = (captureSource == .systemAudio) && SystemAudioTap.shared.isWaitingForProcesses
+            }
+            if isWaiting {
+                statusMessage = "Auto-Routing (Standby for Audio Stream)"
+            } else {
+                let appName = tapAllProcesses ? "All System Audio" : (selectedAudioApp?.name ?? "System Audio")
+                statusMessage = captureSource == .systemAudio ? "Equalizing: \(appName)" : "Hardware Mic Active"
+            }
             activeErrorMessage = nil
             logDiagnostic(level: "INFO", message: "Audio engine online: \(statusMessage) -> Output #\(outID)")
         } catch {

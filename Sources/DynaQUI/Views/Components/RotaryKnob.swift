@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// Minimal Terminal Parameter Controller.
-/// Brutalist studio design: monospace typography, numeric precision readout, center-zero or linear indicator bar,
-/// drag scrubbing with fine adjustments, and double-click reset. Zero bubbles or AI neon slop.
+/// Precision Brutalist Terminal Parameter Controller.
+/// Monospace typography, logarithmic frequency dragging, precision numeric readout,
+/// inline text entry on click, double-click reset, and sharp 1px borders. Zero tacky glow or bubbles.
 public struct RotaryKnob: View {
     public let title: String
     @Binding public var value: Float
@@ -13,6 +13,8 @@ public struct RotaryKnob: View {
 
     @State private var dragStartValue: Float? = nil
     @State private var isHovered: Bool = false
+    @State private var isEditingText: Bool = false
+    @State private var textInput: String = ""
 
     public init(
         title: String,
@@ -31,9 +33,16 @@ public struct RotaryKnob: View {
     }
 
     private var normalizedProgress: Double {
-        let span = Double(range.upperBound - range.lowerBound)
-        guard span > 0 else { return 0.5 }
-        return Double(min(max(value, range.lowerBound), range.upperBound) - range.lowerBound) / span
+        if unit == "Hz" {
+            let logMin = log10(Double(max(range.lowerBound, 20.0)))
+            let logMax = log10(Double(range.upperBound))
+            let logVal = log10(Double(min(max(value, range.lowerBound), range.upperBound)))
+            return (logVal - logMin) / (logMax - logMin)
+        } else {
+            let span = Double(range.upperBound - range.lowerBound)
+            guard span > 0 else { return 0.5 }
+            return Double(min(max(value, range.lowerBound), range.upperBound) - range.lowerBound) / span
+        }
     }
 
     private var isBipolar: Bool {
@@ -50,12 +59,25 @@ public struct RotaryKnob: View {
 
             // Parameter Value Box
             VStack(spacing: 4) {
-                // Numeric Readout
-                Text(formattedValue)
-                    .font(.system(size: 11, weight: .bold, design: .monospaced))
-                    .foregroundColor(isHovered ? tintColor : DynaQTheme.textPrimary)
-                    .lineLimit(1)
-                    .frame(height: 14)
+                // Numeric Readout or Inline Text Input
+                if isEditingText {
+                    TextField("", text: $textInput, onCommit: commitTextInput)
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundColor(tintColor)
+                        .multilineTextAlignment(.center)
+                        .textFieldStyle(.plain)
+                        .frame(height: 14)
+                } else {
+                    Text(formattedValue)
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundColor(isHovered ? tintColor : DynaQTheme.textPrimary)
+                        .lineLimit(1)
+                        .frame(height: 14)
+                        .onTapGesture {
+                            textInput = String(format: "%.1f", value)
+                            isEditingText = true
+                        }
+                }
 
                 // Precision Terminal Indicator Bar
                 GeometryReader { geo in
@@ -101,7 +123,7 @@ public struct RotaryKnob: View {
                     .stroke(isHovered ? tintColor.opacity(0.8) : DynaQTheme.surfaceBorder, lineWidth: 1)
             )
         }
-        .frame(width: 68)
+        .frame(width: 80)
         .contentShape(Rectangle())
         .onHover { hovering in
             isHovered = hovering
@@ -109,23 +131,32 @@ public struct RotaryKnob: View {
         .gesture(
             DragGesture(minimumDistance: 1)
                 .onChanged { gesture in
+                    if isEditingText { isEditingText = false }
                     if dragStartValue == nil {
                         dragStartValue = value
                     }
                     let start = dragStartValue ?? defaultValue
-                    let span = range.upperBound - range.lowerBound
 
-                    // Drag up or right = increase, drag down or left = decrease
-                    let delta = Float(-gesture.translation.height + gesture.translation.width * 0.5) * (span / 220.0)
-                    let newValue = min(max(start + delta, range.lowerBound), range.upperBound)
-
-                    // Step frequency logarithmically, gain in 0.5 steps
                     if unit == "Hz" {
-                        value = round(newValue)
+                        // Logarithmic frequency scrubbing: uniform sensitivity across all octaves
+                        let logMin = log10(max(range.lowerBound, 20.0))
+                        let logMax = log10(range.upperBound)
+                        let logStart = log10(max(start, 20.0))
+                        let delta = Float(-gesture.translation.height + gesture.translation.width * 0.4) / 220.0
+                        let targetLog = logStart + delta * (logMax - logMin)
+                        let targetFreq = pow(10.0, targetLog)
+                        value = min(max(round(targetFreq), range.lowerBound), range.upperBound)
                     } else if unit == "dB" {
-                        value = (newValue * 2.0).rounded() / 2.0
+                        let span = range.upperBound - range.lowerBound
+                        let delta = Float(-gesture.translation.height + gesture.translation.width * 0.4) * (span / 200.0)
+                        let raw = start + delta
+                        let stepped = (raw * 2.0).rounded() / 2.0
+                        value = min(max(stepped, range.lowerBound), range.upperBound)
                     } else {
-                        value = (newValue * 100.0).rounded() / 100.0
+                        let span = range.upperBound - range.lowerBound
+                        let delta = Float(-gesture.translation.height + gesture.translation.width * 0.4) * (span / 200.0)
+                        let raw = start + delta
+                        value = min(max((raw * 100.0).rounded() / 100.0, range.lowerBound), range.upperBound)
                     }
                 }
                 .onEnded { _ in
@@ -134,6 +165,14 @@ public struct RotaryKnob: View {
         )
         .onTapGesture(count: 2) {
             value = defaultValue
+            isEditingText = false
+        }
+    }
+
+    private func commitTextInput() {
+        isEditingText = false
+        if let parsed = Float(textInput) {
+            value = min(max(parsed, range.lowerBound), range.upperBound)
         }
     }
 
@@ -151,6 +190,9 @@ public struct RotaryKnob: View {
             return String(format: "%.1f:1", value)
         } else if unit.isEmpty {
             return String(format: "Q %.2f", value)
+        } else if unit == "Oct" {
+            let sign = value > 0 ? "+" : ""
+            return String(format: "%@%.1fOct", sign, value)
         } else {
             return String(format: "%.1f %@", value, unit)
         }

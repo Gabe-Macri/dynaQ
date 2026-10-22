@@ -4,8 +4,8 @@ import DynaQCore
 import DynaQDynamics
 import CDspKernel
 
-/// Core DSP Engine executing multi-band parametric, dynamic, and Mid/Side equalization.
-/// Offloaded to high-performance C vector kernel (CDspKernel) for zero-overhead audio processing.
+/// Core DSP Engine executing multi-band parametric, dynamic, Frequency-Modulated (FM), and Mid/Side equalization.
+/// Offloaded to high-performance C vector kernel (CDspKernel) for zero-overhead real-time audio processing.
 public final class ParametricEQEngine: @unchecked Sendable {
     private let lock = NSLock()
     private var sampleRate: Float = 48000.0
@@ -13,6 +13,10 @@ public final class ParametricEQEngine: @unchecked Sendable {
     private var profile: EQProfile
     private var bandFilters: [BiquadFilter] = []
     private var dynamicProcessors: [DynamicEQProcessor] = []
+
+    // Frequency Modulation (FM) LFO Phase Accumulators & Live Modulated Frequencies
+    private var lfoPhases: [Float] = []
+    private var liveModulatedFrequencies: [Float] = []
 
     // Native C DSP engine state
     private var cEngine = c_eq_engine_t()
@@ -25,6 +29,9 @@ public final class ParametricEQEngine: @unchecked Sendable {
     // Preamp and Master linear factors
     private var preampLinear: Float = 1.0
     private var masterLinear: Float = 1.0
+
+    // Headroom Buffer & Anti-Clip Saturation Guard
+    public var isHeadroomGuardEnabled: Bool = true
 
     public init(profile: EQProfile = DefaultPresets.harmanHeadphoneTarget, sampleRate: Float = 48000.0) {
         self.profile = profile
@@ -114,6 +121,16 @@ public final class ParametricEQEngine: @unchecked Sendable {
         return cachedCurve
     }
 
+    /// Returns the current real-time modulated frequency for a given band index (FM telemetry).
+    public func getModulatedFrequency(forBandIndex index: Int) -> Float {
+        lock.lock()
+        defer { lock.unlock() }
+        guard index >= 0 && index < liveModulatedFrequencies.count else {
+            return (index >= 0 && index < profile.bands.count) ? profile.bands[index].frequency : 1000.0
+        }
+        return liveModulatedFrequencies[index]
+    }
+
     // MARK: - Internal Engine Setup
 
     private func rebuildEngine() {
@@ -122,6 +139,8 @@ public final class ParametricEQEngine: @unchecked Sendable {
 
         bandFilters = profile.bands.map { _ in BiquadFilter() }
         dynamicProcessors = profile.bands.map { _ in DynamicEQProcessor() }
+        lfoPhases = [Float](repeating: 0.0, count: profile.bands.count)
+        liveModulatedFrequencies = profile.bands.map { $0.frequency }
 
         c_eq_engine_set_gains(&cEngine, preampLinear, masterLinear)
         syncEngineParams()
@@ -156,13 +175,18 @@ public final class ParametricEQEngine: @unchecked Sendable {
         guard index < profile.bands.count, index < Int(C_DSP_MAX_BANDS) else { return }
         let band = profile.bands[index]
 
+        // Solo Logic: If ANY band is soloed, only soloed bands are enabled
+        let anySolo = profile.bands.contains { $0.isSolo }
+        let effectiveEnabled = anySolo ? (band.isSolo && band.isEnabled) : band.isEnabled
+
         if index < bandFilters.count {
-            bandFilters[index].isBypassed = !band.isEnabled
+            bandFilters[index].isBypassed = !effectiveEnabled
         }
 
+        let freq = (index < liveModulatedFrequencies.count) ? liveModulatedFrequencies[index] : band.frequency
         let coeffs = BiquadCoefficients.calculate(
             type: band.filterType,
-            frequency: band.frequency,
+            frequency: freq,
             gainDB: band.gain,
             q: band.q,
             sampleRate: sampleRate
@@ -189,11 +213,14 @@ public final class ParametricEQEngine: @unchecked Sendable {
         case .right: routeInt = 4
         }
 
-        c_eq_engine_set_band(&cEngine, Int32(index), cCoeffs, routeInt, band.isEnabled, immediate)
+        c_eq_engine_set_band(&cEngine, Int32(index), cCoeffs, routeInt, effectiveEnabled, immediate)
     }
 
     private func updateCurveCache() {
-        let activeBands = profile.bands.filter { $0.isEnabled }
+        let anySolo = profile.bands.contains { $0.isSolo }
+        let activeBands = profile.bands.filter { b in
+            anySolo ? (b.isSolo && b.isEnabled) : b.isEnabled
+        }
         let currentSR = sampleRate
         var totalDB = [Float](repeating: 0.0, count: cachedFrequencies.count)
 
@@ -219,44 +246,118 @@ public final class ParametricEQEngine: @unchecked Sendable {
         right: UnsafeMutablePointer<Float>,
         count: Int
     ) {
-        guard !profile.isBypassed else { return }
+        guard !profile.isBypassed, count > 0 else { return }
 
-        // Dynamic EQ modulation if any active
+        let anySolo = profile.bands.contains { $0.isSolo }
+
+        // 1. Dynamic EQ & Frequency Modulation (FM EQ)
         for i in 0..<profile.bands.count {
             let band = profile.bands[i]
-            if band.isDynamic && band.isEnabled && i < dynamicProcessors.count {
+            let effectiveEnabled = anySolo ? (band.isSolo && band.isEnabled) : band.isEnabled
+            guard effectiveEnabled else { continue }
+
+            var targetFreq = band.frequency
+            var targetGain = band.gain
+
+            // Frequency Modulation (FM Mode)
+            if band.isFMEnabled {
+                if band.fmMode == .lfo {
+                    // Periodic sinusoidal frequency sweep
+                    let deltaPhase = 2.0 * Float.pi * band.fmRate * (Float(count) / sampleRate)
+                    var phase = (i < lfoPhases.count) ? lfoPhases[i] : 0.0
+                    phase = fmod(phase + deltaPhase, 2.0 * Float.pi)
+                    if i < lfoPhases.count { lfoPhases[i] = phase }
+
+                    let lfoVal = sin(phase)
+                    let octaveShift = lfoVal * band.fmDepth
+                    targetFreq = band.frequency * pow(2.0, octaveShift)
+                } else if band.fmMode == .envelope && i < dynamicProcessors.count {
+                    // Signal envelope tracking FM
+                    let dyn = dynamicProcessors[i]
+                    let offsetDB = dyn.processBlock(samples: left, count: count, sampleRate: sampleRate, band: band)
+                    // Normalized dynamic envelope deflection
+                    let envFactor = min(max(offsetDB / max(abs(band.dynamicRange), 1.0), -1.0), 1.0)
+                    let octaveShift = envFactor * band.fmDepth
+                    targetFreq = band.frequency * pow(2.0, octaveShift)
+                }
+
+                targetFreq = min(max(targetFreq, 20.0), min(20000.0, sampleRate * 0.48))
+                if i < liveModulatedFrequencies.count {
+                    liveModulatedFrequencies[i] = targetFreq
+                }
+            } else {
+                if i < liveModulatedFrequencies.count {
+                    liveModulatedFrequencies[i] = band.frequency
+                }
+            }
+
+            // Dynamic Gain Modulation
+            if band.isDynamic && !band.isFMEnabled && i < dynamicProcessors.count {
                 let dyn = dynamicProcessors[i]
                 let offsetDB = dyn.processBlock(samples: left, count: count, sampleRate: sampleRate, band: band)
-                if abs(offsetDB) > 0.02 {
-                    let dynCoeffs = BiquadCoefficients.calculate(
-                        type: band.filterType,
-                        frequency: band.frequency,
-                        gainDB: band.gain + offsetDB,
-                        q: band.q,
-                        sampleRate: sampleRate
-                    )
-                    let cCoeffs = c_biquad_coeffs_t(
-                        b0: dynCoeffs.b0,
-                        b1: dynCoeffs.b1,
-                        b2: dynCoeffs.b2,
-                        a1: dynCoeffs.a1,
-                        a2: dynCoeffs.a2
-                    )
-                    let routeInt: Int32
-                    switch band.routing {
-                    case .stereo: routeInt = 0
-                    case .mid: routeInt = 1
-                    case .side: routeInt = 2
-                    case .left: routeInt = 3
-                    case .right: routeInt = 4
-                    }
-                    c_eq_engine_set_band(&cEngine, Int32(i), cCoeffs, routeInt, true, false)
+                targetGain += offsetDB
+            }
+
+            // If FM or Dynamic EQ modulated parameters, smoothly update biquad target
+            if band.isFMEnabled || (band.isDynamic && abs(targetGain - band.gain) > 0.02) {
+                let dynCoeffs = BiquadCoefficients.calculate(
+                    type: band.filterType,
+                    frequency: targetFreq,
+                    gainDB: targetGain,
+                    q: band.q,
+                    sampleRate: sampleRate
+                )
+                let cCoeffs = c_biquad_coeffs_t(
+                    b0: dynCoeffs.b0,
+                    b1: dynCoeffs.b1,
+                    b2: dynCoeffs.b2,
+                    a1: dynCoeffs.a1,
+                    a2: dynCoeffs.a2
+                )
+                let routeInt: Int32
+                switch band.routing {
+                case .stereo: routeInt = 0
+                case .mid: routeInt = 1
+                case .side: routeInt = 2
+                case .left: routeInt = 3
+                case .right: routeInt = 4
                 }
+                c_eq_engine_set_band(&cEngine, Int32(i), cCoeffs, routeInt, true, false)
             }
         }
 
-        // Single vectorized C call for all active filter bands, Mid/Side matrixing, phase, and gains
+        // 2. Vectorized C EQ processing (filters, preamp, master gain, M/S, phase)
         c_eq_engine_process_stereo(&cEngine, left, right, count)
+
+        // 3. Headroom Buffer & Anti-Clip Saturation Guard
+        // Prevents harsh digital clipping when aggressive filter settings or resonant peaks occur
+        if isHeadroomGuardEnabled {
+            applySoftSaturationHeadroom(left: left, right: right, count: count)
+        }
+    }
+
+    /// Internal smooth soft-saturation curve preventing settings from clipping into harsh digital rail distortion.
+    private func applySoftSaturationHeadroom(
+        left: UnsafeMutablePointer<Float>,
+        right: UnsafeMutablePointer<Float>,
+        count: Int
+    ) {
+        for i in 0..<count {
+            let l = left[i]
+            let r = right[i]
+
+            // Rational soft-knee saturation: if |x| > 0.85, gently compress toward ceiling
+            if abs(l) > 0.85 {
+                let sgn: Float = l > 0 ? 1.0 : -1.0
+                let excess = (abs(l) - 0.85) / 0.15
+                left[i] = sgn * (0.85 + 0.138 * tanh(excess))
+            }
+            if abs(r) > 0.85 {
+                let sgn: Float = r > 0 ? 1.0 : -1.0
+                let excess = (abs(r) - 0.85) / 0.15
+                right[i] = sgn * (0.85 + 0.138 * tanh(excess))
+            }
+        }
     }
 
     // MARK: - Frequency Curve Evaluation (For UI Visualization)
@@ -264,7 +365,10 @@ public final class ParametricEQEngine: @unchecked Sendable {
     public func evaluateCompositeResponse(at frequencies: [Float]) -> [Float] {
         lock.lock()
         defer { lock.unlock() }
-        let activeBands = profile.bands.filter { $0.isEnabled }
+        let anySolo = profile.bands.contains { $0.isSolo }
+        let activeBands = profile.bands.filter { b in
+            anySolo ? (b.isSolo && b.isEnabled) : b.isEnabled
+        }
         let currentSR = sampleRate
         var totalDB = [Float](repeating: 0.0, count: frequencies.count)
 

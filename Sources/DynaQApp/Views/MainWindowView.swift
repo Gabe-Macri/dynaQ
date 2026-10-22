@@ -8,7 +8,6 @@ import DynaQAudioDriver
 /// Minimal Brutalist Terminal Aesthetic: monospace typography, sharp 1px borders, zero neon glow or bubbles.
 public struct MainWindowView: View {
     @ObservedObject var state = AppState.shared
-    @State private var showAppRouting = false
 
     public init() {}
 
@@ -29,7 +28,7 @@ public struct MainWindowView: View {
                             Text("DYNAQ")
                                 .font(.system(size: 13, weight: .heavy, design: .monospaced))
                                 .foregroundColor(DynaQTheme.textPrimary)
-                            Text(state.isEngineOnline ? "ONLINE // 48kHz" : "STANDBY")
+                            Text(state.isEngineOnline ? "ONLINE // AUTO-ROUTE" : "STANDBY")
                                 .font(.system(size: 7, weight: .bold, design: .monospaced))
                                 .foregroundColor(state.isEngineOnline ? DynaQTheme.phosphorGreen : DynaQTheme.textMuted)
                         }
@@ -56,9 +55,10 @@ public struct MainWindowView: View {
 
                 Spacer()
 
-                // Complete Hardware I/O & Target App Selector
+                // Complete Hardware I/O & Unified Target Selector
                 DeviceSelectorView(
                     captureSource: state.captureSource,
+                    tapAllProcesses: state.tapAllProcesses,
                     availableApps: state.availableAudioApps,
                     selectedApp: state.selectedAudioApp,
                     devices: state.devices,
@@ -68,30 +68,13 @@ public struct MainWindowView: View {
                     latencyMs: state.roundtripLatencyMs,
                     feedbackGuard: state.feedbackProtection,
                     onSelectCaptureSource: { state.setCaptureSource($0) },
+                    onToggleTapAllProcesses: { state.setTapAllProcesses($0) },
                     onSelectApp: { state.selectAudioApp($0) },
                     onSelectInput: { state.setInputDevice($0) },
                     onSelectOutput: { state.setOutputDevice($0) },
                     onSelectBufferSize: { state.setBufferSize($0) },
                     onToggleFeedbackGuard: { state.feedbackProtection.toggle() }
                 )
-
-                // Per-App Routing Drawer Toggle
-                Button(action: {
-                    withAnimation(.easeInOut(duration: 0.15)) {
-                        showAppRouting.toggle()
-                    }
-                }) {
-                    Text(showAppRouting ? "[ APPS: CLOSE ]" : "[ APPS ]")
-                        .font(.system(size: 8, weight: .bold, design: .monospaced))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 5)
-                        .background(showAppRouting ? DynaQTheme.terminalCyan.opacity(0.15) : DynaQTheme.surfaceElevated)
-                        .foregroundColor(showAppRouting ? DynaQTheme.terminalCyan : DynaQTheme.textSecondary)
-                        .overlay(
-                            Rectangle().stroke(showAppRouting ? DynaQTheme.terminalCyan : DynaQTheme.surfaceBorder, lineWidth: 1)
-                        )
-                }
-                .buttonStyle(.plain)
 
                 // Comprehensive System Settings Modal Toggle
                 Button(action: {
@@ -189,16 +172,6 @@ public struct MainWindowView: View {
             )
             .padding(.horizontal, 12)
 
-            // Per-App Routing Drawer (Collapsible)
-            if showAppRouting {
-                AppRoutingView(
-                    routes: $state.appRoutes,
-                    availableProfiles: state.presets
-                )
-                .padding(.horizontal, 12)
-                .transition(.opacity)
-            }
-
             // Master Section (Preamp, Master, Phase Invert, Limiter, A/B Compare, Segmented VU Meters)
             MasterSectionView(
                 profile: Binding(
@@ -221,11 +194,11 @@ public struct MainWindowView: View {
 
             // Terminal Status Bar
             HStack(spacing: 8) {
-                let appStr = state.selectedAudioApp?.name ?? "System Audio"
+                let sourceStr = routeSourceString
                 let outStr = state.selectedOutputDevice?.name ?? "Default Output"
                 let srStr = String(format: "%.0f Hz", state.selectedOutputDevice?.currentSampleRate ?? 48000.0)
 
-                Text("// ROUTE: [ \(appStr.uppercased()) ] ➔ [ \(outStr.uppercased()) (\(srStr)) ]")
+                Text("// ROUTE: [ \(sourceStr) ] ➔ [ \(outStr.uppercased()) (\(srStr)) ]")
                     .font(.system(size: 8, weight: .bold, design: .monospaced))
                     .foregroundColor(DynaQTheme.textMuted)
 
@@ -238,7 +211,7 @@ public struct MainWindowView: View {
             .padding(.horizontal, 14)
             .padding(.bottom, 8)
         }
-        .frame(minWidth: 980, minHeight: 640)
+        .frame(minWidth: 1040, minHeight: 660)
         .background(DynaQTheme.bg)
         .sheet(isPresented: $state.showSettingsModal) {
             SettingsView(
@@ -277,6 +250,14 @@ public struct MainWindowView: View {
                 onInstallDriver: { state.installHalDriver() },
                 onClose: { state.showSettingsModal = false }
             )
+        }
+    }
+
+    private var routeSourceString: String {
+        if state.captureSource == .systemAudio {
+            return state.tapAllProcesses ? "ALL SYSTEM AUDIO" : (state.selectedAudioApp?.name.uppercased() ?? "SYSTEM AUDIO")
+        } else {
+            return state.selectedInputDevice?.name.uppercased() ?? "MIC IN"
         }
     }
 }

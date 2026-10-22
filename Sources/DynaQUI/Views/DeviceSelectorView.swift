@@ -3,10 +3,11 @@ import CoreAudio
 import DynaQCore
 import DynaQAudioDriver
 
-/// Hardware I/O selector strip showing Target App, Capture Source, Input, Output, Buffer Size, and Live Latency.
+/// Hardware I/O selector strip showing unified Capture Source, Target App, Input, Output, Buffer Size, and Live Latency.
 /// Minimal Terminal Style: monospace typography, sharp 1px borders, command-line parameter styling.
 public struct DeviceSelectorView: View {
     public let captureSource: AudioCaptureSource
+    public let tapAllProcesses: Bool
     public let availableApps: [AudioAppProcess]
     public let selectedApp: AudioAppProcess?
     public let devices: [AudioDevice]
@@ -16,6 +17,7 @@ public struct DeviceSelectorView: View {
     public let latencyMs: Double
     public let feedbackGuard: Bool
     public let onSelectCaptureSource: (AudioCaptureSource) -> Void
+    public let onToggleTapAllProcesses: (Bool) -> Void
     public let onSelectApp: (AudioAppProcess) -> Void
     public let onSelectInput: (AudioDevice) -> Void
     public let onSelectOutput: (AudioDevice) -> Void
@@ -24,6 +26,7 @@ public struct DeviceSelectorView: View {
 
     public init(
         captureSource: AudioCaptureSource = .systemAudio,
+        tapAllProcesses: Bool = true,
         availableApps: [AudioAppProcess] = [],
         selectedApp: AudioAppProcess? = nil,
         devices: [AudioDevice],
@@ -33,6 +36,7 @@ public struct DeviceSelectorView: View {
         latencyMs: Double,
         feedbackGuard: Bool,
         onSelectCaptureSource: @escaping (AudioCaptureSource) -> Void = { _ in },
+        onToggleTapAllProcesses: @escaping (Bool) -> Void = { _ in },
         onSelectApp: @escaping (AudioAppProcess) -> Void = { _ in },
         onSelectInput: @escaping (AudioDevice) -> Void,
         onSelectOutput: @escaping (AudioDevice) -> Void,
@@ -40,6 +44,7 @@ public struct DeviceSelectorView: View {
         onToggleFeedbackGuard: @escaping () -> Void
     ) {
         self.captureSource = captureSource
+        self.tapAllProcesses = tapAllProcesses
         self.availableApps = availableApps
         self.selectedApp = selectedApp
         self.devices = devices
@@ -49,6 +54,7 @@ public struct DeviceSelectorView: View {
         self.latencyMs = latencyMs
         self.feedbackGuard = feedbackGuard
         self.onSelectCaptureSource = onSelectCaptureSource
+        self.onToggleTapAllProcesses = onToggleTapAllProcesses
         self.onSelectApp = onSelectApp
         self.onSelectInput = onSelectInput
         self.onSelectOutput = onSelectOutput
@@ -58,46 +64,75 @@ public struct DeviceSelectorView: View {
 
     public var body: some View {
         HStack(spacing: 6) {
-            // Target Application Selector (When in System Audio Mode)
-            if captureSource == .systemAudio {
-                Menu {
-                    Section(header: Text("TARGET APPLICATION TO CAPTURE & EQUALIZE")) {
+            // Unified Capture Source Menu
+            Menu {
+                Button(action: {
+                    onSelectCaptureSource(.systemAudio)
+                    onToggleTapAllProcesses(true)
+                }) {
+                    HStack {
+                        Text("ALL SYSTEM AUDIO (AUTO-ROUTE)")
+                        if captureSource == .systemAudio && tapAllProcesses {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+
+                if !availableApps.isEmpty {
+                    Section(header: Text("INDIVIDUAL APPLICATIONS")) {
                         ForEach(availableApps) { app in
-                            Button(action: { onSelectApp(app) }) {
+                            Button(action: {
+                                onSelectCaptureSource(.systemAudio)
+                                onToggleTapAllProcesses(false)
+                                onSelectApp(app)
+                            }) {
                                 HStack {
                                     Text(app.name)
-                                    if app.id == selectedApp?.id {
+                                    if captureSource == .systemAudio && !tapAllProcesses && app.id == selectedApp?.id {
                                         Image(systemName: "checkmark")
                                     }
                                 }
                             }
                         }
                     }
-                } label: {
-                    HStack(spacing: 4) {
-                        Text("APP:")
-                            .font(.system(size: 8, weight: .bold, design: .monospaced))
-                            .foregroundColor(DynaQTheme.textMuted)
-                        Text("[ \(selectedApp?.name ?? "Apple Music") ]")
-                            .font(.system(size: 9, weight: .bold, design: .monospaced))
-                            .foregroundColor(DynaQTheme.terminalCyan)
-                            .lineLimit(1)
-                            .frame(maxWidth: 120, alignment: .leading)
-                        Image(systemName: "chevron.up.chevron.down")
-                            .font(.system(size: 6))
-                            .foregroundColor(DynaQTheme.textMuted)
-                    }
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 4)
-                    .background(DynaQTheme.surfaceElevated)
-                    .overlay(
-                        Rectangle().stroke(DynaQTheme.surfaceBorder, lineWidth: 1)
-                    )
                 }
-                .menuStyle(.borderlessButton)
-            }
 
-            // Hardware Input Device Selector (If Hardware Input Mode)
+                Divider()
+
+                Button(action: {
+                    onSelectCaptureSource(.hardwareInput)
+                }) {
+                    HStack {
+                        Text("HARDWARE MICROPHONE / INPUT")
+                        if captureSource == .hardwareInput {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Text("SRC:")
+                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                        .foregroundColor(DynaQTheme.textMuted)
+                    Text("[ \(sourceBadgeText) ]")
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .foregroundColor(captureSource == .systemAudio ? DynaQTheme.terminalCyan : DynaQTheme.terminalBlue)
+                        .lineLimit(1)
+                        .frame(maxWidth: 140, alignment: .leading)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.system(size: 6))
+                        .foregroundColor(DynaQTheme.textMuted)
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 4)
+                .background(DynaQTheme.surfaceElevated)
+                .overlay(
+                    Rectangle().stroke(DynaQTheme.surfaceBorder, lineWidth: 1)
+                )
+            }
+            .menuStyle(.borderlessButton)
+
+            // Hardware Input Device Selector (When Hardware Input Mode Active)
             if captureSource == .hardwareInput {
                 Menu {
                     Section(header: Text("HARDWARE INPUT")) {
@@ -117,11 +152,11 @@ public struct DeviceSelectorView: View {
                         Text("IN:")
                             .font(.system(size: 8, weight: .bold, design: .monospaced))
                             .foregroundColor(DynaQTheme.textMuted)
-                        Text("[ \(currentInput?.name ?? "No Input") ]")
+                        Text("[ \(currentInput?.name ?? "Default In") ]")
                             .font(.system(size: 9, weight: .bold, design: .monospaced))
                             .foregroundColor(DynaQTheme.terminalBlue)
                             .lineLimit(1)
-                            .frame(maxWidth: 110, alignment: .leading)
+                            .frame(maxWidth: 100, alignment: .leading)
                         Image(systemName: "chevron.up.chevron.down")
                             .font(.system(size: 6))
                             .foregroundColor(DynaQTheme.textMuted)
@@ -142,7 +177,7 @@ public struct DeviceSelectorView: View {
                     ForEach(devices.filter { $0.isOutput }) { dev in
                         Button(action: { onSelectOutput(dev) }) {
                             HStack {
-                                Text(dev.name)
+                                Text("\(dev.name) (\(Int(dev.currentSampleRate)) Hz)")
                                 if dev.id == currentOutput?.id {
                                     Image(systemName: "checkmark")
                                 }
@@ -155,7 +190,7 @@ public struct DeviceSelectorView: View {
                     Text("OUT:")
                         .font(.system(size: 8, weight: .bold, design: .monospaced))
                         .foregroundColor(DynaQTheme.textMuted)
-                    Text("[ \(currentOutput?.name ?? "No Output") ]")
+                    Text("[ \(currentOutput?.name ?? "Default Output") ]")
                         .font(.system(size: 9, weight: .bold, design: .monospaced))
                         .foregroundColor(DynaQTheme.phosphorGreen)
                         .lineLimit(1)
@@ -223,6 +258,14 @@ public struct DeviceSelectorView: View {
             .overlay(
                 Rectangle().stroke(DynaQTheme.surfaceBorder, lineWidth: 1)
             )
+        }
+    }
+
+    private var sourceBadgeText: String {
+        if captureSource == .systemAudio {
+            return tapAllProcesses ? "ALL SYSTEM AUDIO" : (selectedApp?.name ?? "SINGLE APP")
+        } else {
+            return "HARDWARE MIC"
         }
     }
 }

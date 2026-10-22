@@ -114,7 +114,14 @@ public final class AudioEngineManager: @unchecked Sendable {
     private var leftScratch = [Float](repeating: 0.0, count: 16384)
     private var rightScratch = [Float](repeating: 0.0, count: 16384)
 
-    public init() {}
+    public init() {
+        CoreAudioManager.shared.onProcessesChanged = { [weak self] in
+            guard let self = self, self.captureSource == .systemAudio else { return }
+            if #available(macOS 14.2, *) {
+                SystemAudioTap.shared.checkAndAttachPendingProcesses()
+            }
+        }
+    }
 
     /// Configures and starts live system I/O routing with comprehensive error handling.
     public func start(

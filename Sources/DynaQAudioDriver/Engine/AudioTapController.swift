@@ -27,6 +27,11 @@ public final class SystemAudioTap: @unchecked Sendable {
     private var aggregateID: AudioDeviceID = 0
     private var tapIOProcID: AudioDeviceIOProcID? = nil
     private var isRunning: Bool = false
+    public private(set) var isWaitingForProcesses: Bool = false
+    private var lastTargetIDs: [AudioObjectID] = []
+    private var lastMute: Bool = true
+    private var lastSampleRate: Double? = nil
+    private var lastBufferSize: UInt32? = nil
     private let lock = NSLock()
 
     // Pre-allocated scratch buffers for zero-allocation real-time deinterleaving
@@ -111,21 +116,61 @@ public final class SystemAudioTap: @unchecked Sendable {
 
         guard !isRunning else { return }
 
+        self.lastTargetIDs = targetIDs
+        self.lastMute = muteTargetOutput
+        self.lastSampleRate = targetSampleRate
+        self.lastBufferSize = targetBufferSize
+
         // 1. Determine processes to tap
         var processList = targetIDs
         if processList.isEmpty {
             let apps = fetchAudioProcesses()
-            // Tap ALL active audio processes for true system-wide capture
             processList = apps.map { $0.id }
         }
 
+        // Auto-route resilience: If no active audio processes exist on startup, enter standby listening mode
         guard !processList.isEmpty else {
-            throw NSError(
-                domain: "dynaQ.SystemAudioTap",
-                code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "No active audio processes detected. Start audio playback and retry."]
-            )
+            self.isWaitingForProcesses = true
+            return
         }
+
+        self.isWaitingForProcesses = false
+        try startTapInternal(
+            processList: processList,
+            muteTargetOutput: muteTargetOutput,
+            targetSampleRate: targetSampleRate,
+            targetBufferSize: targetBufferSize
+        )
+    }
+
+    /// Automatically attaches to audio processes when they appear (auto-route on startup / playback).
+    public func checkAndAttachPendingProcesses() {
+        lock.lock()
+        defer { lock.unlock() }
+
+        guard !isRunning, isWaitingForProcesses else { return }
+        var processList = lastTargetIDs
+        if processList.isEmpty {
+            let apps = fetchAudioProcesses()
+            processList = apps.map { $0.id }
+        }
+
+        guard !processList.isEmpty else { return }
+        self.isWaitingForProcesses = false
+        try? startTapInternal(
+            processList: processList,
+            muteTargetOutput: lastMute,
+            targetSampleRate: lastSampleRate,
+            targetBufferSize: lastBufferSize
+        )
+    }
+
+    private func startTapInternal(
+        processList: [AudioObjectID],
+        muteTargetOutput: Bool,
+        targetSampleRate: Double?,
+        targetBufferSize: UInt32?
+    ) throws {
 
         // 2. Build CATapDescription with .mutedWhenTapped so raw audio is redirected ONLY through dynaQ
         let tapDesc = CATapDescription(stereoMixdownOfProcesses: processList)
@@ -267,6 +312,7 @@ public final class SystemAudioTap: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
 
+        isWaitingForProcesses = false
         guard isRunning else { return }
 
         if let proc = tapIOProcID, aggregateID != 0 {
