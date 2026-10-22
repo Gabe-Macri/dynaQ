@@ -1,6 +1,6 @@
 # Router Daemon & CLI
 
-dynaQ provides two separate executables: the full graphical application (`dynaQ`) and the standalone ultra-lightweight routing daemon (`dynaQ-router`).
+dynaQ provides modular command-line utilities and headless daemon services alongside the graphical desktop application.
 
 ---
 
@@ -21,11 +21,11 @@ Or from the built release binary:
 ```
 
 ### Execution Characteristics
-- **Passthrough Mode**: Consumes ~0.0% CPU when routing audio directly across physical endpoints.
-- **Process Signals**: Intercepts `SIGINT` (Ctrl+C) and `SIGTERM` to safely stop CoreAudio IO units, flush circular buffers, and release device locks.
+- **Transparent Passthrough**: Consumes ~0.0% CPU when routing audio directly across physical endpoints.
+- **Process Signal Handling**: Intercepts `SIGINT` (Ctrl+C) and `SIGTERM` to safely stop CoreAudio IO units, flush circular buffers, and release device locks.
 - **Console Telemetry**: Prints stream status, negotiated hardware sample rates, buffer sizes, and live roundtrip latency.
 
-### Example Terminal Output
+### Example Console Output
 
 ```
 ┌─────────────────────────────┐
@@ -43,9 +43,90 @@ Or from the built release binary:
 
 ---
 
+## Rust SIMD Optimization Engine (`dynaq-opt`)
+
+`dynaq-opt` is a native Rust CLI utility utilizing SIMD vectorization for sub-millisecond AutoEQ target curve optimization and FIR filter design.
+
+### Usage
+
+```bash
+dynaq-opt [options]
+```
+
+### Options
+
+| Flag | Parameter | Description |
+| :--- | :--- | :--- |
+| `-t`, `--target` | `<string>` | Target curve profile (`harman`, `diffuse_field`, `free_field`, or path to CSV). |
+| `-m`, `--measured` | `<path>` | Path to measured headphone or room frequency response CSV file. |
+| `-o`, `--output` | `<path>` | Output path for calculated biquad JSON profile. |
+| `-b`, `--bands` | `<int>` | Maximum number of parametric biquad bands to allocate (default: 8). |
+| `-i`, `--max-iter` | `<int>` | Optimizer iteration ceiling (default: 1000). |
+| `-h`, `--help` | — | Display CLI help reference and exit. |
+
+### Example Optimization Run
+
+```bash
+./dist/dynaq-opt --target harman --measured measurement.csv --bands 10 --output calibrated_profile.json
+```
+
+```
+[DYNAQ-OPT] Loading measured curve: measurement.csv (512 points)
+[DYNAQ-OPT] Target curve selected: Harman In-Ear 2019
+[DYNAQ-OPT] Initial RMSE: 4.82 dB
+[DYNAQ-OPT] Optimizing 10 parametric biquad bands via SIMD SSE/NEON...
+[DYNAQ-OPT] Optimization converged in 12.4 ms (284 iterations)
+[DYNAQ-OPT] Final RMSE: 0.38 dB (-4.44 dB error reduction)
+[DYNAQ-OPT] Profile exported to calibrated_profile.json
+```
+
+---
+
+## Python Backend SDK and IPC Bridge
+
+The Python package (`python/dynaq`) provides programmatic control over the dynaQ DSP engine via a high-performance Unix domain socket (`/tmp/dynaq_ipc.sock`) or TCP (port 9879).
+
+### Architecture
+
+```
++---------------------------+       Unix Domain Socket       +---------------------------+
+|    Python Client / SDK    | <----------------------------> |       dynaQ Backend       |
+|   (JSON-RPC 2.0 Client)   |      /tmp/dynaq_ipc.sock       |  (Real-Time Engine Daemon)|
++---------------------------+                                +---------------------------+
+```
+
+### JSON-RPC 2.0 Command Reference
+
+| Method | Parameters | Return Value | Description |
+| :--- | :--- | :--- | :--- |
+| `get_profile` | None | `ProfileObject` | Retrieves all active biquad bands and gain parameters. |
+| `set_band` | `id, freq, gain, q, type` | `bool` | Atomically updates a specific EQ band's parameters. |
+| `set_limiter_mode` | `live: bool` | `bool` | Toggles True Peak Limiter between Live and Mastering mode. |
+| `query_telemetry` | None | `TelemetryObject` | Returns instantaneous Peak, RMS, and LUFS readings. |
+
+### Example Python Script
+
+```python
+from dynaq.client import DynaQClient
+
+client = DynaQClient(socket_path="/tmp/dynaq_ipc.sock")
+client.connect()
+
+# Set Band 2 to 250 Hz peaking filter, -2.5 dB gain, Q=1.4
+client.set_band(band_id=2, frequency=250.0, gain_db=-2.5, q=1.4, filter_type="bell")
+
+# Query real-time loudness metrics
+telemetry = client.query_telemetry()
+print(f"Momentary LUFS: {telemetry.momentary_lufs:.1f} | Peak: {telemetry.peak_dbfs:.1f} dBFS")
+
+client.close()
+```
+
+---
+
 ## Command-Line Reference
 
-The main `dynaQ` executable supports several diagnostic and operational flags:
+The main `dynaQ` application executable supports operational and diagnostic flags:
 
 ```bash
 dynaQ [options]
@@ -55,22 +136,16 @@ dynaQ [options]
 
 | Flag | Description |
 | :--- | :--- |
-| `--gui` | Launches the graphical user interface and menu bar app (default behavior). |
+| `--gui` | Launches the graphical user interface and menu bar status item (default behavior). |
 | `--list-devices` | Enumerates all connected CoreAudio hardware devices with sample rates, buffer sizes, and latencies. |
 | `--driver-status` | Inspects system driver status, user-space tap support, and HAL driver installations. |
 | `-h`, `--help` | Prints CLI usage reference and exits. |
 
----
-
-## Diagnostic Examples
-
-### Device Enumeration (`--list-devices`)
+### Device Enumeration Output (`--list-devices`)
 
 ```bash
 swift run dynaQ --list-devices
 ```
-
-Output:
 
 ```
 Enumerating CoreAudio hardware devices...
@@ -84,17 +159,14 @@ ID   | DIR    | RATE     | BUFFER   | LATENCY  | NAME
 --------------------------------------------------------------------------------
 ```
 
-### Driver Status Check (`--driver-status`)
+### Driver Status Output (`--driver-status`)
 
 ```bash
 swift run dynaQ --driver-status
 ```
 
-Output:
-
 ```
 dynaQ Audio Routing Status:
-• Native CoreAudio System Tap: Fully supported & active
-• Virtual HAL Driver: Not Installed (Using Native User-Space Tap)
+• Native CoreAudio System Tap: Fully supported & active (macOS 14.2+)
+• Virtual HAL Driver: /Library/Audio/Plug-Ins/HAL/DynaQDriver.driver (Active)
 ```
-

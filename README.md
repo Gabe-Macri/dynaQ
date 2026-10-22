@@ -1,194 +1,153 @@
-# dynaQ — Professional System-Wide Audio Management Suite
+# dynaQ // Professional Audio Management Suite
 
 [![Swift Check](https://github.com/Gabe-Macri/dynaQ/actions/workflows/swift.yml/badge.svg)](https://github.com/Gabe-Macri/dynaQ/actions/workflows/swift.yml)
 
-**dynaQ** is a high-performance, ultra-low-latency audio management suite engineered for audio engineers, music producers, mastering studios, and audiophiles on macOS. Its flagship feature is a **system-wide, multi-band parametric and dynamic equalizer** that processes all system audio with studio-grade precision directly across CoreAudio hardware inputs and outputs.
+**dynaQ** is a high-performance system-wide audio equalization and routing suite for macOS. Engineered with a decoupled C/Rust/Swift architecture, it delivers studio-grade parametric equalization, dynamic frequency modulation, and true-peak brickwall limiting with zero-overhead real-time thread safety.
 
 ---
 
-## Pro Features & Audio Engineering Toolset
+## Core Engineering Features
 
-- **Decoupled Ultra-Lightweight Backend Architecture (`dynaQ-router`)**:
-  - **Ultra-Lightweight Dedicated Backend**: CoreAudio routing logic runs completely decoupled from DSP equations, consuming ~0.0% CPU in passthrough.
-  - **Explicit Client Stream Protocol**: The backend (`DynaQAudioDriver`) delegates audio blocks to registered clients (`AudioProcessingClient`).
-  - **Client-Side Heavy Manipulation**: Heavy audio processing (multi-band parametric EQ, dynamic EQ, FFT analysis, true peak limiting, BS.1770 metering) runs strictly on the client side (`ClientDSPPipeline`).
-  - **Standalone Backend Daemon**: `swift run dynaQ-router` runs the ultra-lightweight router as an independent background service.
-- **High-Performance C & Vector DSP Backend (`CDspKernel`)**:
-  - Critical real-time audio paths offloaded to an optimized C kernel (`CDspKernel`) with Apple `Accelerate` (vDSP) vectorization to completely relieve CPU stress from the Swift runtime.
-  - **Lock-Free Atomic SPSC Ring Buffer**: `stdatomic.h` memory-fenced circular buffer eliminating mutexes, locks, and priority inversion from the real-time audio thread.
-  - **Vectorized Biquad Cascade**: Cascading Direct Form II Transposed biquads executed in tight, unrolled C loops with smooth coefficient ramping.
-  - **Hardware Vector Telemetry**: Peak and RMS evaluation powered by `vDSP_maxmgv` and `vDSP_measqv` for instantaneous, zero-allocation metering.
-  - **Vectorized Mid/Side Matrix & Limiter**: Real-time M/S encoding/decoding and soft-knee true peak limiting executing via SIMD vector routines.
-- **Real-Time System I/O Integration**:
-  - Direct CoreAudio HAL hardware integration with selectable hardware inputs (mics, loopback devices, audio interfaces) and outputs (AirPods, Studio Monitors, USB DACs).
-  - Variable hardware buffer frame size selection (**64, 128, 256, 512, 1024 samples**).
-  - Accurate live **roundtrip latency reporting** (hardware latency + driver safety offset calculation in milliseconds, e.g. `< 3.0 ms`).
-  - **Acoustic Feedback Protection**: Intelligent guard detecting built-in microphone and speaker combinations to prevent dangerous acoustic howl.
-- **System-Wide Parametric EQ**:
-  - Cascading Direct Form II Transposed biquad filters derived from Robert Bristow-Johnson (RBJ) Audio EQ Cookbook mathematics.
-  - Filter shapes: **Bell (Peaking), Low Shelf, High Shelf, Low Pass (High Cut), High Pass (Low Cut), Notch, and Band Pass**.
-  - Arbitrary band count with per-band frequency (20 Hz – 20 kHz), gain (±24 dB), and Q factor (0.1 – 18.0).
-- **Mid / Side (M/S) & Stereo Channel Routing**:
-  - Individual bands can be assigned to **Stereo**, **Mid (Center)**, **Side (Stereo Width)**, **Left**, or **Right** channels for surgical mastering and spatial balance.
-  - **Phase Polarity Flip (180° Ø)** and monitor audition modes (**Stereo, Mono L+R, Sides L-R, Left Only, Right Only**).
-- **Dynamic EQ (Real-time Envelope Tracking)**:
-  - Frequency-selective compression/expansion with attack, release, threshold (-60 dBFS to 0 dBFS), dynamic range, and ratio controls.
-- **A / B State Comparison**:
-  - Dual profile comparison slots (**Slot A** vs **Slot B**) with instant toggle and `Copy A → B` workflow.
-- **Real-Time FFT Spectrum Analyzer**:
-  - Powered by Apple's `Accelerate` framework (`vDSP`).
-  - 1024-point complex DFT with Hann windowing, mapped logarithmically to 64 visual frequency bins with peak ballistics.
-- **Pro Metering & Clip Guard**:
-  - ITU-R BS.1770 / EBU R128 compliant LUFS metering (momentary and integrated).
-  - Stereo Peak and RMS meters with sticky clip LEDs.
-  - Soft-knee **True Peak Limiter** with adjustable ceiling (-6.0 dBFS to 0.0 dBFS).
-- **Per-Application Audio Routing**:
-  - Route individual application streams (Spotify, Logic Pro, Ableton, Chrome, Zoom) through independent EQ profiles and custom volume trims.
-- **Audiophile & Studio Presets**:
-  - Harman Target Headphone Curve, Studio Reference Flat, Warm Analog Mastering, Vocal Clarity & De-Esser, Low-End Punch, Broadcast Speech.
+- **Decoupled Architecture (`DynaQAudioDriver` & `dynaQ-router`)**: CoreAudio routing runs decoupled from DSP computation (~0.0% CPU in passthrough). Client pipelines pull and push audio blocks via an explicit, non-blocking protocol.
+- **Vectorized C DSP Kernel (`CDspKernel`)**: Time-critical signal maths offloaded to C99 with Apple Accelerate (vDSP) vectorization:
+  - **Lock-Free Atomic SPSC Ring Buffer**: `stdatomic.h` memory-fenced circular buffers eliminating mutexes and priority inversions on real-time DAC threads.
+  - **Cascading Biquads**: Direct Form II Transposed biquad sections with smooth coefficient ramping across block boundaries.
+  - **Vectorized Mid/Side Matrix**: Real-time M/S encoding/decoding and dedicated pre-limiter matrix decode step.
+  - **True Peak Brickwall Limiter**: Lookahead limiter with soft-knee saturation, featuring a **Zero-Latency Live Mode** (0 lookahead samples for DAW tracking) and **Mastering Mode** (32 samples).
+- **Frequency Modulation (FM EQ)**:
+  - Dynamic EQ with **Frequency Modulation** in addition to dynamic gain.
+  - **Envelope Follower Mode (`.envelope`)**: Modulates center frequency based on signal transients.
+  - **LFO Sweep Mode (`.lfo`)**: Periodic sinusoidal frequency modulation ($0.1$ to $20.0\text{ Hz}$, $\pm 3.0\text{ Oct}$ depth).
+- **Dynamic Sample Rate & Auto-Routing**:
+  - Automatically handles clock transitions (e.g. AirPods switching between 96 kHz and 48 kHz), purging stale ring buffer frames to prevent pitch warps.
+  - Non-blocking auto-routing on startup via `kAudioHardwarePropertyProcessObjectList` listener.
+- **Thread-Decoupled Visualizers & Telemetry**:
+  - FFT spectrum analysis and ITU-R BS.1770 LUFS metering execute entirely on background telemetry threads via dedicated SPSC buffer.
+  - Zero-allocation `Canvas` rendering for discrete RTA spectrum bars and 20-segment LED meters running at 60–120 FPS.
+  - Internal $+3.0\text{ dB}$ anti-clip headroom buffer with rational soft-knee saturation guard ($\tanh$).
+- **Rust SIMD Optimization Engine (`dynaq-rust`)**:
+  - Sub-millisecond AutoEQ target curve optimization (scipy/SLSQP replacement reducing RMSE).
+  - High-precision FIR filter kernel generation and 4x oversampled true-peak detection.
+  - Accessible via CLI (`dynaq-opt`) and C dynamic library (`libdynaq_rust.dylib`).
+- **Python Backend SDK & IPC Bridge (`python/dynaq`)**:
+  - Python client and headless background server communicating via Unix domain socket (`/tmp/dynaq_ipc.sock`) or TCP port 9879.
+  - Programmatic EQ profile switching, telemetry querying, and automated test integration.
 
 ---
 
-## Architecture
+## Signal Pipeline Architecture
 
 ```mermaid
 flowchart TD
-    subgraph System Audio Sources
-        App1["Spotify / Apple Music"]
-        App2["Logic Pro / DAW"]
-        App3["System Sounds / Browser"]
+    subgraph Capture Layer
+        SysAudio["macOS Audio Streams (Music, DAW, System)"] --> Tap["CoreAudio Process Tap / HAL Driver"]
     end
 
-    subgraph Audio Interception Layer
-        HAL["dynaQ Virtual HAL Driver (/Library/Audio/Plug-Ins/HAL)"]
-        Tap["macOS CATapDescription / AUHAL Input Tap"]
+    subgraph Real-Time DAC Output Thread
+        Tap --> SPSC_In["Lock-Free SPSC Input Ring Buffer"]
+        SPSC_In --> Preamp["Preamp Gain Staging (-18 dB to +18 dB)"]
+        Preamp --> MSEnc["Mid/Side Matrix Encoder"]
+        MSEnc --> FMEQ["Parametric & Frequency Modulation EQ (Direct Form II-T)"]
+        FMEQ --> DynEQ["Dynamic Envelope Gain Modulation"]
+        DynEQ --> MSDec["Explicit Mid/Side Matrix Decoder"]
+        MSDec --> Headroom["+3.0 dB Soft-Knee Anti-Clip Headroom Guard"]
+        Headroom --> Limiter["True Peak Limiter (Live 0ms / Mastering 32spl)"]
+        Limiter --> DAC["Physical Hardware Output (DAC / Headphones)"]
     end
 
-    subgraph dynaQ DSP Processing Pipeline
-        Preamp["Preamp Gain Staging (-18 dB to +18 dB)"]
-        MS["Mid / Side Channel Splitter & Matrix"]
-        DynamicEQ["Multi-Band Dynamic EQ & Envelope Detector"]
-        ParametricEQ["Multi-Band Cascading Biquad Filters (vDSP)"]
-        Phase["Phase Invert (180° Ø) & Monitor Mode (Mono/Sides)"]
-        Limiter["True Peak Soft-Knee Limiter & Ceiling Guard"]
-        FFT["vDSP FFT Spectrum Analyzer (1024-point DFT)"]
-        Meters["Loudness & Stereo VU Meter (LUFS / Peak / RMS)"]
+    subgraph Background Telemetry Thread
+        Limiter -.-> VisSPSC["Visualizer SPSC Ring Buffer"]
+        VisSPSC --> FFT["1024-Point vDSP FFT Spectrum Analyzer"]
+        VisSPSC --> LUFS["ITU-R BS.1770 / EBU R128 Loudness Meter"]
+        FFT --> UI["Monospace Canvas UI (60-120 FPS)"]
+        LUFS --> UI
     end
-
-    subgraph Physical Output Hardware
-        DAC["USB DAC / Audio Interface"]
-        Monitors["Studio Monitors"]
-        Headphones["AirPods / Pro Headphones"]
-    end
-
-    App1 --> HAL
-    App2 --> Tap
-    App3 --> HAL
-
-    HAL --> Preamp
-    Tap --> Preamp
-
-    Preamp --> MS
-    MS --> DynamicEQ
-    DynamicEQ --> ParametricEQ
-    ParametricEQ --> Phase
-    Phase --> Limiter
-    Limiter --> FFT
-    Limiter --> Meters
-
-    Limiter --> DAC
-    Limiter --> Monitors
-    Limiter --> Headphones
 ```
 
-## Getting Started
+---
 
-### 1. Build and Test
+## Technical Specifications
+
+| Parameter | Specification |
+| :--- | :--- |
+| **Supported OS** | macOS 14.0+ (Sonoma, Sequoia) on Apple Silicon (arm64) and Intel (x86_64) |
+| **Audio Subsystem** | CoreAudio HAL + AudioOutputUnit (AUHAL) + Process Tap (`CATapDescription`) |
+| **Supported Sample Rates**| 44.1 kHz, 48.0 kHz, 88.2 kHz, 96.0 kHz, 192.0 kHz (with dynamic switch handling) |
+| **Hardware Buffer Sizes** | 64, 128, 256, 512, 1024 samples |
+| **Roundtrip Latency** | Direct measurement: $\sim 2.8\text{ ms}$ (at 64 samples / 48 kHz) |
+| **DSP Precision** | 32-bit floating point SIMD (Apple Accelerate vDSP + C99 + Rust SIMD) |
+| **EQ Topologies** | Bell (Peaking), Low Shelf, High Shelf, Low Pass, High Pass, Notch, Band Pass |
+| **Modulation Modes** | Static EQ, Dynamic Gain Modulation, Frequency Modulation (Envelope & LFO) |
+| **Metering & Limits** | True Peak, RMS, Momentary/Integrated LUFS, Soft-Knee Brickwall Ceiling |
+| **IPC Protocol** | JSON-RPC over Unix domain socket (`/tmp/dynaq_ipc.sock`) and TCP port 9879 |
+
+---
+
+## Quick Start
+
+### Build and Verify
 ```bash
+# Build complete Swift workspace and run unit tests
 swift build
-swift test
+swift test --parallel
+
+# Run Rust SIMD unit tests
+cargo test --manifest-path native/dynaq-rust/Cargo.toml
+
+# Run Python SDK unit tests
+python3 -m unittest discover -s python/tests
 ```
 
-### 2. Inspect Hardware I/O & Latency
-Enumerate all discovered CoreAudio inputs, outputs, sample rates, buffer sizes, and calculated hardware latencies:
+### Command-Line Diagnostics
 ```bash
+# Enumerate hardware endpoints, sample rates, buffer sizes, and latencies
 swift run dynaQ --list-devices
-```
 
-### 3. Launch Studio GUI
-```bash
-swift run dynaQ
+# Run headless routing backend daemon in ultra-lightweight passthrough
+swift run dynaQ-router
+
+# Run Rust AutoEQ optimization CLI
+./dist/dynaq-opt --target harman --measured measurements.csv --output profile.json
 ```
-- Operates directly on live system audio input/output.
-- The visualizer displays the real FFT spectrum of audio actively playing on the system.
-- Select your target input and output hardware from the top navigation bar.
-- Adjust buffer sizes on the fly to tune latency vs CPU overhead.
-- Docks into the macOS Menu Bar for quick access.
 
 ---
 
-## Documentation
+## Installation & Deployment
 
-Comprehensive technical documentation is available in the [`docs/`](docs/) directory:
-- [System Overview & Architecture](docs/#/architecture)
-- [C DSP Kernel & Lock-Free SPSC Buffer](docs/#/c-dsp-kernel)
-- [Parametric & Dynamic EQ Mathematics](docs/#/dsp-engine)
-- [CoreAudio Hardware Routing & Latency](docs/#/routing-and-io)
-- [Standalone Router Daemon & CLI](docs/#/cli-and-router)
-- [Installation & Build Pipelines](docs/#/installation)
+### 1. Unified All-In-One Installer (Recommended)
+Packages the graphical app, CoreAudio HAL virtual driver, Rust engine, Python SDK, and CLI tools:
+- Mount `output/dynaQ-Installer.dmg` and run **Install dynaQ Complete.pkg**.
+- Installs `dynaQ.app` to `/Applications`, CLI tools to `/usr/local/bin`, and restarts `coreaudiod` automatically.
 
----
-
-## Production Release & Installation (v1.0.0-beta.1)
-
-### Option A: Install via Homebrew (CLI & Background Service)
+### 2. Homebrew
 ```bash
-# Add dynaQ tap
 brew tap Gabe-Macri/dynaq https://github.com/Gabe-Macri/dynaQ
-
-# Install CLI binaries (dynaq and dynaq-router)
-brew install dynaq
-
-# Run audio router backend as a managed background service
-brew services start dynaq
-
-# Or install the graphical desktop app into /Applications
-brew install --cask dynaq
+brew install dynaq        # Installs CLI binaries
+brew services start dynaq # Starts background routing daemon
+brew install --cask dynaq # Installs /Applications/dynaQ.app
 ```
 
-### Option B: Run in Docker (DSP Diagnostics & Docs Server)
+### 3. Docker Environment
 ```bash
-# Build lightweight container image (< 20 MB)
 docker build -t dynaq .
-
-# Execute real-time DSP cycle benchmarks
-docker run --rm dynaq --bench
-
-# Launch documentation server on http://localhost:8080
-docker run -d -p 8080:8080 dynaq docs
+docker run --rm dynaq --bench           # Run DSP cycle benchmarks
+docker run -d -p 8080:8080 dynaq docs   # Serve offline documentation at localhost:8080
 ```
 
-### Option C: All-In-One Complete Installer (`.pkg` / `.dmg`) [Recommended]
-For users who want the desktop app, virtual CoreAudio driver, and CLI commands installed automatically without manual configuration:
-- Double-click `output/dynaQ-1.0.0-beta.1-all-in-one.dmg` and run **Install dynaQ Complete.pkg**.
-- This automatically installs:
-  - `dynaQ.app` into `/Applications`
-  - `dynaq` and `dynaq-router` into `/usr/local/bin`
-  - CoreAudio Virtual HAL Driver into `/Library/Audio/Plug-Ins/HAL`
-  - Restarts CoreAudio automatically (no system reboot required).
-
-### Option D: Minimal Drag-and-Drop Disk Image (`.dmg`)
-Double-click `output/dynaQ-1.0.0-beta.1.dmg` and drag `dynaQ.app` into `/Applications`.
-
-### Option E: Build Production Release Package from Source
-Run the release packaging pipeline:
+### 4. Build Release from Source
 ```bash
 ./scripts/build_release.sh
 ```
-This automatically:
-1. Compiles optimized production release binaries (`swift build -c release`).
-2. Generates multi-resolution Retina `AppIcon.icns`.
-3. Assembles the standalone macOS application bundle: `dist/dynaQ.app`.
-4. Codesigns the bundle with ad-hoc signing (`codesign --deep`).
-5. Packages a drag-and-drop installer disk image: `dist/dynaQ-1.0.0-beta.1.dmg`.
+Compiles universal binaries, signs packages, and generates clean DMGs and PKGs in `output/`.
 
+---
+
+## Documentation Index
+
+Full technical documentation is available in [`docs/`](docs/) or via the offline web server:
+- [Architecture & Threading Model](docs/architecture.md)
+- [C DSP Kernel & Memory Barriers](docs/c-dsp-kernel.md)
+- [EQ Mathematics & Frequency Modulation](docs/dsp-engine.md)
+- [CoreAudio Routing & Latency](docs/routing-and-io.md)
+- [Daemon, CLI, & Python Backend](docs/cli-and-router.md)
+- [Installation & Build Pipelines](docs/installation.md)

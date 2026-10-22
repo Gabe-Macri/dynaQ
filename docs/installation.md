@@ -1,39 +1,58 @@
 # Deployment & Builds
 
-dynaQ provides multiple deployment methods tailored for different workflows:
+dynaQ provides multiple deployment methods tailored for studio workstations, headless daemons, CI pipelines, and package managers:
+- **Unified Installer (DMG/PKG)**: All-in-one signed package with drivers, CLI utilities, and background daemon.
 - **Homebrew**: Native macOS CLI and Cask package management.
-- **Docker**: Containerized DSP benchmark suite and static documentation server.
-- **Disk Image (DMG)**: Standalone drag-and-drop macOS desktop application.
-- **Source Compilation**: Swift Package Manager build from source.
+- **Docker**: Containerized DSP benchmark suite and static documentation server (< 20 MB).
+- **Source Compilation**: Swift Package Manager and Cargo build pipelines.
+
+---
+
+## Unified All-In-One Installer (Recommended)
+
+The complete release package (`v1.0.0-beta.2`) bundles the desktop application, HAL driver, Rust optimizer, Python SDK, and command-line tools into a single authenticated installer:
+
+### Included Components
+- **Application Bundle**: `/Applications/dynaQ.app` (includes embedded offline documentation and Python SDK)
+- **CLI Commands**: `/usr/local/bin/dynaq`, `/usr/local/bin/dynaq-router`, `/usr/local/bin/dynaq-opt`, `/usr/local/bin/dynaq-cli`
+- **Dynamic Libraries**: `/usr/local/lib/libdynaq_rust.dylib`
+- **CoreAudio HAL Driver**: `/Library/Audio/Plug-Ins/HAL/DynaQDriver.driver` (universal `arm64` / `x86_64`)
+- **Background Daemon Service**: `/Library/LaunchAgents/com.dynaq.router.plist`
+- **Automatic Setup**: Restarts `coreaudiod` immediately post-install; zero terminal commands required.
+
+### Installation Steps
+1. Double-click `output/dynaQ-Installer.dmg` (or standalone `output/dynaQ-Installer.pkg`).
+2. Run **Install dynaQ Complete.pkg**.
+3. Follow the standard macOS installer wizard and authenticate.
+4. Launch `dynaQ` from `/Applications` or run `dynaq` from any terminal session.
+
+### Clean Uninstallation
+The installer disk image includes an automated zero-trace removal utility:
+- Double-click **Uninstall dynaQ.command** to cleanly purge all binaries, HAL drivers, and LaunchAgent services.
 
 ---
 
 ## Homebrew Installation (macOS)
 
-For users who prefer CLI installations and background service management via Homebrew:
+For users managing command-line packages and services via Homebrew:
 
-### 1. Add the Repository Tap
+### 1. Tap Repository
 ```bash
 brew tap Gabe-Macri/dynaq https://github.com/Gabe-Macri/dynaQ
 ```
 
 ### 2. Install CLI Binaries & Daemon
-Install the compiled `dynaq` CLI and `dynaq-router` binaries:
-
 ```bash
 brew install dynaq
 ```
+Installs `dynaq`, `dynaq-router`, and `dynaq-opt` into `$PATH` (`/opt/homebrew/bin` on Apple Silicon, `/usr/local/bin` on Intel).
 
-This places `dynaq` and `dynaq-router` into your `$PATH` (`/opt/homebrew/bin` on Apple Silicon, `/usr/local/bin` on Intel).
-
-### 3. Background Daemon Management (`brew services`)
-Run the lightweight audio router daemon as a background service managed by `launchd`:
-
+### 3. Background Daemon Management (`launchd`)
 ```bash
 # Start background router daemon
 brew services start dynaq
 
-# Check daemon status
+# Check daemon health
 brew services list
 
 # Stop background router daemon
@@ -41,8 +60,6 @@ brew services stop dynaq
 ```
 
 ### 4. Install Desktop Application via Cask
-To install the graphical `.app` bundle directly into `/Applications`:
-
 ```bash
 brew install --cask dynaq
 ```
@@ -51,18 +68,15 @@ brew install --cask dynaq
 
 ## Docker Container Environment
 
-For containerized environments, Linux hosts, and automated CI pipelines, dynaQ provides an Alpine-based Docker package (< 20 MB) containing the compiled C DSP kernel CLI and the documentation server.
+For CI pipelines, Linux hosts, and DSP benchmarking, dynaQ provides an Alpine-based container package (< 20 MB):
 
-### 1. Build the Docker Image
+### 1. Build Image
 ```bash
 docker build -t dynaq .
 ```
 
-### 2. Run DSP Diagnostics & Benchmarks
+### 2. Run DSP Benchmarks & Diagnostics
 ```bash
-# Display CLI reference and engine parameters
-docker run --rm dynaq --help
-
 # Run real-time DSP cycle benchmarks (biquads, SPSC ring buffer, limiter)
 docker run --rm dynaq --bench
 
@@ -73,58 +87,11 @@ docker run --rm dynaq --verify
 docker run --rm dynaq --specs
 ```
 
-### 3. Launch Local Documentation Server
-Launch the static documentation web server on port 8080:
-
+### 3. Serve Local Offline Documentation
 ```bash
 docker run -d -p 8080:8080 --name dynaq-docs dynaq docs
 ```
-
-Navigate to `http://localhost:8080` to access the full technical reference.
-
-### 4. Using Docker Compose
-Alternatively, launch with Docker Compose:
-
-```bash
-# Start documentation server in background
-docker compose up -d dynaq-docs
-
-# Run one-off DSP benchmark
-docker compose run --rm dynaq-cli --bench
-```
-
----
-
-## All-In-One Complete Installer (Recommended)
-
-For users who want all dependencies, virtual audio drivers, background services, and CLI tools installed automatically in a single click:
-
-### Included Components
-- **Application Bundle**: `/Applications/dynaQ.app` (includes embedded offline documentation and helpers)
-- **CLI Commands**: `/usr/local/bin/dynaq` and `/usr/local/bin/dynaq-router` (accessible globally from any terminal)
-- **CoreAudio Virtual Driver**: `/Library/Audio/Plug-Ins/HAL/DynaQDriver.driver` (universal arm64/x86_64)
-- **Background Daemon Service**: `/Library/LaunchAgents/com.dynaq.router.plist`
-- **Automatic Configuration**: Restarts `coreaudiod` post-install; zero terminal commands required.
-
-### Installation Steps
-1. Double-click `output/dynaQ-1.0.0-beta.1-all-in-one.dmg` (or standalone `output/dynaQ-1.0.0-beta.1-complete.pkg`).
-2. Run **Install dynaQ Complete.pkg**.
-3. Follow the standard macOS installer prompt and authenticate.
-4. Launch `dynaQ` from `/Applications` or run `dynaq` from your terminal.
-
-### Uninstallation
-The All-In-One DMG includes an automated removal wizard:
-- Double-click **Uninstall dynaQ.command** to cleanly remove all application binaries, drivers, and background services.
-
----
-
-## Minimal Drag-and-Drop Disk Image (DMG)
-
-For users who only require the standalone `.app` bundle without system-wide driver registration:
-
-1. Double-click `output/dynaQ-1.0.0-beta.1.dmg`.
-2. Drag `dynaQ.app` into `/Applications`.
-3. Open `dynaQ.app` from `/Applications` or launch via Spotlight.
+Navigate to `http://localhost:8080` for the complete technical reference.
 
 ---
 
@@ -132,70 +99,54 @@ For users who only require the standalone `.app` bundle without system-wide driv
 
 ### System Prerequisites
 - **Operating System**: macOS 14.0 (Sonoma) or newer.
-- **Build Tools**: Xcode 15.0+ or Xcode Command Line Tools (`xcode-select --install`).
-- **Toolchain**: Swift 5.9+.
+- **Build Tools**: Xcode 15.0+ or Command Line Tools (`xcode-select --install`).
+- **Toolchains**: Swift 5.9+, Rust 1.75+ (optional, for `dynaq-rust`), Python 3.10+.
 
-### Quick Build
-
-Compile release binaries directly from the repository root:
+### Compilation Steps
 
 ```bash
-# Debug build with unit test execution
-swift build
-swift test --parallel
-
-# Optimized production release build
+# 1. Compile Swift application and router binaries
 swift build -c release
+
+# 2. Compile native Rust SIMD library and optimizer CLI
+cargo build --release --manifest-path native/dynaq-rust/Cargo.toml
+
+# 3. Execute unit test suites
+swift test --parallel
+cargo test --manifest-path native/dynaq-rust/Cargo.toml
+python3 -m unittest discover -s python/tests
 ```
 
-Binaries will be placed in `.build/release/`:
+Compiled binaries are located in:
 - `.build/release/dynaQ` (Main application binary)
 - `.build/release/dynaQ-router` (Standalone routing daemon)
+- `native/dynaq-rust/target/release/dynaq-opt` (Rust AutoEQ optimizer)
+- `native/dynaq-rust/target/release/libdynaq_rust.dylib` (Shared C dynamic library)
 
 ---
 
 ## Release Packaging Pipeline
 
-To generate the complete production app bundle and compressed installer disk image, execute the automated release script:
+To generate the complete production app bundle, codesigned installers, and compressed DMGs:
 
 ```bash
 ./scripts/build_release.sh
 ```
 
-### Build Pipeline Steps
-
-1. **Production Compilation**:
-   Executes `swift build -c release` with optimizations (`-O`) and dead-code stripping.
-
-2. **Retina Icon Generation**:
-   Executes `swift scripts/generate_icon.swift`, rendering multi-resolution raster assets (16x16 through 1024x1024) and packaging them into a native macOS `AppIcon.icns`.
-
-3. **Application Bundle Assembly**:
-   Constructs the macOS application directory layout:
-   ```
-   dist/dynaQ.app/
-   └── Contents/
-       ├── Info.plist
-       ├── MacOS/
-       │   └── dynaQ
-       ├── Helpers/
-       │   └── dynaQ-router
-       └── Resources/
-           └── AppIcon.icns
-   ```
-
-4. **Code Signing**:
-   Signs all binaries and bundles with ad-hoc signature (`codesign --force --deep --sign -`).
-
-5. **DMG Disk Image Creation**:
-   Creates a read-only compressed UDZO disk image (`hdiutil create -ov -format UDZO`) with an `/Applications` symlink for drag-and-drop installation.
+### Automated Pipeline Workflow
+1. **Production Compilation**: Executes `swift build -c release` with dead-code stripping and SIMD optimizations.
+2. **Rust & Native Asset Assembly**: Builds `dynaq-opt` and `libdynaq_rust.dylib`, placing them into helper and library search paths.
+3. **Retina Icon Generation**: Runs `swift scripts/generate_icon.swift`, rendering multi-resolution assets (16x16 to 1024x1024) into `AppIcon.icns`.
+4. **Application Bundle Assembly**: Constructs `dist/dynaQ.app` with embedded documentation, Python IPC bridge, and LaunchAgent templates.
+5. **Code Signing**: Applies ad-hoc codesigning signatures (`codesign --force --deep --sign -`).
+6. **Installer Package (PKG) Creation**: Bundles payload into `/usr/local/bin`, `/Library/Audio/Plug-Ins/HAL/`, and `/Library/LaunchAgents/` with pre/postinstall hooks.
+7. **DMG Disk Image Creation**: Generates compressed read-only UDZO disk image `output/dynaQ-Installer.dmg`.
 
 ---
 
 ## macOS Audio Permissions
 
-System audio interception requires macOS user permission:
-1. On the first launch, macOS will present a system prompt requesting permission to capture audio.
+System audio interception requires macOS user authorization:
+1. On initial launch, macOS will request microphone/audio capture access.
 2. Grant permission under **System Settings > Privacy & Security > Microphone**.
-3. If using loopback devices, ensure the virtual driver has permission to capture system output.
-
+3. If utilizing the virtual driver, ensure the HAL extension is permitted under **Privacy & Security**.

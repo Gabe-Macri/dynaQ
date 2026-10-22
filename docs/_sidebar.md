@@ -1,40 +1,47 @@
 - System Overview
   - [System Overview](README.md)
   - [Technical Specifications](README.md#technical-specifications)
+  - [Pipeline Architecture](README.md#signal-pipeline-architecture)
   - [Quick Start](README.md#quick-start)
 
-- Architecture & Design
-  - [Decoupled Architecture](architecture.md)
+- Architecture & Threading
+  - [Decoupled Architecture](architecture.md#decoupled-architecture)
   - [Threading & Memory Model](architecture.md#threading-and-memory-model)
+  - [Visualizer Ring Buffer Decoupling](architecture.md#visualizer-ring-buffer-decoupling)
   - [Client Stream Protocol](architecture.md#client-stream-protocol)
 
 - Core C DSP Kernel
-  - [CDspKernel Overview](c-dsp-kernel.md)
+  - [CDspKernel Overview](c-dsp-kernel.md#core-c-dsp-kernel)
   - [Atomic SPSC Ring Buffer](c-dsp-kernel.md#atomic-spsc-ring-buffer)
   - [Vectorized Biquad Engine](c-dsp-kernel.md#vectorized-biquad-engine)
-  - [Mid/Side Matrixing](c-dsp-kernel.md#vectorized-midside-processing)
-  - [True Peak Soft-Knee Limiter](c-dsp-kernel.md#true-peak-soft-knee-limiter)
+  - [Mid/Side Matrix & Pre-Limiter Decode](c-dsp-kernel.md#vectorized-midside-processing)
+  - [True Peak Limiter & Live Mode](c-dsp-kernel.md#true-peak-soft-knee-limiter)
 
 - EQ & Signal Processing
-  - [Parametric Equalizer](dsp-engine.md)
-  - [RBJ Biquad Mathematics](dsp-engine.md#rbj-biquad-filter-mathematics)
-  - [Dynamic EQ Envelope Detector](dsp-engine.md#dynamic-eq-envelope-tracking)
-  - [vDSP FFT & Loudness Telemetry](dsp-engine.md#spectral-analysis-and-loudness)
+  - [Parametric Equalizer](dsp-engine.md#parametric-equalizer)
+  - [RBJ Biquad Filter Mathematics](dsp-engine.md#rbj-biquad-filter-mathematics)
+  - [Frequency Modulation (FM EQ)](dsp-engine.md#frequency-modulation-fm-eq)
+  - [Dynamic Gain Modulation](dsp-engine.md#dynamic-gain-modulation)
+  - [Anti-Clip Headroom Guard](dsp-engine.md#anti-clip-headroom-guard)
+  - [Spectral Analysis & Loudness](dsp-engine.md#spectral-analysis-and-loudness)
 
 - CoreAudio & Routing
-  - [Hardware I/O Integration](routing-and-io.md)
+  - [Hardware I/O Integration](routing-and-io.md#hardware-io-integration)
   - [Capture Mechanisms](routing-and-io.md#capture-mechanisms)
+  - [Dynamic Sample Rate Switching](routing-and-io.md#dynamic-sample-rate-switching)
+  - [Auto-Routing on Startup](routing-and-io.md#auto-routing-on-startup)
   - [Roundtrip Latency Calculation](routing-and-io.md#roundtrip-latency-calculation)
   - [Acoustic Feedback Guard](routing-and-io.md#acoustic-feedback-guard)
 
-- Router Daemon & CLI
-  - [Standalone Router Daemon](cli-and-router.md)
+- Rust & Python Platform
+  - [Rust SIMD Engine & AutoEQ](cli-and-router.md#rust-simd-optimization-engine-dynaq-opt)
+  - [Python Backend SDK & IPC](cli-and-router.md#python-backend-sdk-and-ipc-bridge)
+  - [Router Daemon](cli-and-router.md#standalone-router-daemon)
   - [CLI Reference](cli-and-router.md#command-line-reference)
 
 - Deployment & Builds
-  - [All-In-One Complete Installer](installation.md#all-in-one-complete-installer-recommended)
+  - [All-In-One Unified Installer](installation.md#unified-all-in-one-installer-recommended)
   - [Homebrew Installation](installation.md#homebrew-installation-macos)
-  - [Docker Container](installation.md#docker-container-environment)
-  - [Minimal Drag-and-Drop DMG](installation.md#minimal-drag-and-drop-disk-image-dmg)
+  - [Docker Environment](installation.md#docker-container-environment)
   - [Building from Source](installation.md#building-from-source)
-  - [Release Packaging Pipeline](installation.md#release-packaging-pipeline)
+  - [Automated Release Packaging](installation.md#release-packaging-pipeline)
