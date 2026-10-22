@@ -1,13 +1,6 @@
 #!/usr/bin/env bash
 set -e
 
-# ==============================================================================
-# dynaQ Unified Production All-In-One Installer Packaging Script
-# Wraps all components into a single plug-and-play installer:
-#   • dynaQ-Installer.dmg (Unified DMG with native PKG, app bundle, and uninstaller)
-#   • dynaQ-Installer.pkg (Native macOS distribution installer)
-# ==============================================================================
-
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
@@ -29,21 +22,21 @@ echo "======================================================================"
 mkdir -p "$DIST_DIR"
 mkdir -p "$OUTPUT_DIR"
 
-# ------------------------------------------------------------------------------
+# 
 # 1. Compile in Release Mode
-# ------------------------------------------------------------------------------
+# 
 echo "\n[1/8] Compiling production release binaries (SwiftPM)..."
 swift build -c release
 
-# ------------------------------------------------------------------------------
+# 
 # 2. Generate Native Multi-Resolution Retina AppIcon.icns
-# ------------------------------------------------------------------------------
+# 
 echo "\n[2/8] Generating native AppIcon.icns..."
 swift scripts/generate_icon.swift
 
-# ------------------------------------------------------------------------------
+# 
 # 3. Build Universal CoreAudio HAL Virtual Driver Bundle
-# ------------------------------------------------------------------------------
+# 
 echo "\n[3/8] Compiling universal CoreAudio HAL Driver (arm64 + x86_64)..."
 rm -rf "$DRIVER_BUNDLE"
 mkdir -p "$DRIVER_BUNDLE/Contents/MacOS"
@@ -62,9 +55,9 @@ echo -n "BNDL????" > "$DRIVER_BUNDLE/Contents/PkgInfo"
 codesign --force --deep --sign - "$DRIVER_BUNDLE"
 echo "  ✓ DynaQDriver.driver compiled and signed."
 
-# ------------------------------------------------------------------------------
+# 
 # 4. Build Standalone C DSP Benchmark & Diagnostic Utility
-# ------------------------------------------------------------------------------
+# 
 echo "\n[4/8] Compiling native DSP benchmark CLI utility..."
 clang -O3 \
     docker/cli_main.c \
@@ -76,9 +69,9 @@ clang -O3 \
 chmod +x "$DIST_DIR/dynaq-cli"
 codesign --force --sign - "$DIST_DIR/dynaq-cli"
 
-# ------------------------------------------------------------------------------
+# 
 # 5. Assemble Self-Contained dynaQ.app Bundle
-# ------------------------------------------------------------------------------
+# 
 echo "\n[5/8] Assembling self-contained dynaQ.app bundle..."
 rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_BUNDLE/Contents/MacOS"
@@ -260,9 +253,9 @@ productbuild \
 rm -rf "$PKG_ROOT" "$PKG_SCRIPTS" "$DIST_DIR/dynaQ-component.pkg" "$DIST_DIR/Distribution.xml"
 echo "  ✓ Unified native installer package created: $DIST_DIR/dynaQ-Installer.pkg"
 
-# ------------------------------------------------------------------------------
+# 
 # 7. Build Unified All-In-One Disk Image (.dmg)
-# ------------------------------------------------------------------------------
+# 
 echo "\n[7/7] Creating unified All-In-One installer disk image (dynaQ-Installer.dmg)..."
 ALL_IN_ONE_STAGING="$DIST_DIR/all_in_one_staging"
 rm -rf "$ALL_IN_ONE_STAGING" "$DIST_DIR/dynaQ-Installer.dmg"
@@ -349,9 +342,9 @@ hdiutil create \
 rm -rf "$ALL_IN_ONE_STAGING"
 echo "  ✓ Unified All-In-One disk image created: $DIST_DIR/dynaQ-Installer.dmg"
 
-# ------------------------------------------------------------------------------
+# 
 # Populate output/ distribution folder with Unified Installer only
-# ------------------------------------------------------------------------------
+# 
 echo "\nPopulating output/ distribution folder with unified installer..."
 rm -rf "$OUTPUT_DIR"/*
 

@@ -10,5 +10,5 @@ DerivedData/
 *~
 /dist/
 /output/
-
+.ci
 
