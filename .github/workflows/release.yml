@@ -69,3 +69,4 @@ jobs:
             output/dynaQ-Installer.dmg
             output/dynaQ-Installer.pkg
             output/SHA256SUMS.txt
+
