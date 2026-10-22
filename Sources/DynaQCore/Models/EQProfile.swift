@@ -23,6 +23,7 @@ public struct EQProfile: Identifiable, Codable, Equatable, Sendable {
     public var isBypassed: Bool
     public var isLimiterEnabled: Bool
     public var limiterCeiling: Float    // Ceiling in dBFS (e.g. -0.2 dBFS)
+    public var isLiveMode: Bool         // Zero-latency mode (bypasses lookahead delay line for DAW tracking)
     public var phaseInvert: Bool        // 180° polarity flip
     public var monitorMode: MonitorMode
     public var isFactory: Bool
@@ -40,6 +41,7 @@ public struct EQProfile: Identifiable, Codable, Equatable, Sendable {
         isBypassed: Bool = false,
         isLimiterEnabled: Bool = true,
         limiterCeiling: Float = -0.2,
+        isLiveMode: Bool = false,
         phaseInvert: Bool = false,
         monitorMode: MonitorMode = .stereo,
         isFactory: Bool = false,
@@ -56,11 +58,32 @@ public struct EQProfile: Identifiable, Codable, Equatable, Sendable {
         self.isBypassed = isBypassed
         self.isLimiterEnabled = isLimiterEnabled
         self.limiterCeiling = limiterCeiling
+        self.isLiveMode = isLiveMode
         self.phaseInvert = phaseInvert
         self.monitorMode = monitorMode
         self.isFactory = isFactory
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        category = try container.decodeIfPresent(String.self, forKey: .category) ?? "Custom"
+        notes = try container.decodeIfPresent(String.self, forKey: .notes) ?? ""
+        bands = try container.decode([EQBand].self, forKey: .bands)
+        preampGain = try container.decodeIfPresent(Float.self, forKey: .preampGain) ?? 0.0
+        masterGain = try container.decodeIfPresent(Float.self, forKey: .masterGain) ?? 0.0
+        isBypassed = try container.decodeIfPresent(Bool.self, forKey: .isBypassed) ?? false
+        isLimiterEnabled = try container.decodeIfPresent(Bool.self, forKey: .isLimiterEnabled) ?? true
+        limiterCeiling = try container.decodeIfPresent(Float.self, forKey: .limiterCeiling) ?? -0.2
+        isLiveMode = try container.decodeIfPresent(Bool.self, forKey: .isLiveMode) ?? false
+        phaseInvert = try container.decodeIfPresent(Bool.self, forKey: .phaseInvert) ?? false
+        monitorMode = try container.decodeIfPresent(MonitorMode.self, forKey: .monitorMode) ?? .stereo
+        isFactory = try container.decodeIfPresent(Bool.self, forKey: .isFactory) ?? false
+        createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
     }
 
     /// Returns a deep copy suitable for A/B comparison or editing.

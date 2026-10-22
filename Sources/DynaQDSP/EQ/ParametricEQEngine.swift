@@ -100,6 +100,13 @@ public final class ParametricEQEngine: @unchecked Sendable {
         syncEngineParams()
     }
 
+    /// Indicates whether any active EQ bands utilize Mid/Side matrixing.
+    public var isMidSideActive: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return profile.bands.contains { $0.isEnabled && ($0.routing == .mid || $0.routing == .side) }
+    }
+
     /// Returns the precalculated 128-point frequency response curve for instant zero-lag UI rendering.
     public func getCachedCurve() -> [Float] {
         lock.lock()

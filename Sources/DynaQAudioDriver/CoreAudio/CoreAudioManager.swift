@@ -10,6 +10,8 @@ public final class CoreAudioManager: @unchecked Sendable {
     public var onDevicesChanged: (([AudioDevice]) -> Void)?
     public var onDefaultOutputChanged: ((AudioDevice?) -> Void)?
     public var onDefaultInputChanged: ((AudioDevice?) -> Void)?
+    public var onSampleRateChanged: ((AudioDeviceID, Double) -> Void)?
+    private var observedSampleRateDeviceID: AudioDeviceID? = nil
 
     public init() {
         registerPropertyListeners()
@@ -341,6 +343,24 @@ public final class CoreAudioManager: @unchecked Sendable {
         case kAudioDeviceTransportTypeVirtual: return .virtualDevice
         case kAudioDeviceTransportTypeAggregate: return .aggregate
         default: return .unknown
+        }
+    }
+
+    /// Explicitly monitors nominal sample-rate transitions for the active physical audio device
+    /// (e.g. AirPods or external DAC changing nominal clock between 96kHz, 48kHz, or 44.1kHz).
+    public func observeSampleRate(for deviceID: AudioDeviceID) {
+        guard deviceID != 0 else { return }
+        observedSampleRateDeviceID = deviceID
+
+        var propertyAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyNominalSampleRate,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        AudioObjectAddPropertyListenerBlock(deviceID, &propertyAddress, nil) { [weak self] _, _ in
+            guard let self = self else { return }
+            let sr = self.getDeviceSampleRate(id: deviceID)
+            self.onSampleRateChanged?(deviceID, sr)
         }
     }
 

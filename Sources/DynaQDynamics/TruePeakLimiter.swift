@@ -16,6 +16,13 @@ public final class TruePeakLimiter: @unchecked Sendable {
     }
 
     public var isEnabled: Bool = true
+    public var isLiveMode: Bool = false {
+        didSet {
+            if let lim = cLimiter {
+                c_lookahead_limiter_set_live_mode(lim, isLiveMode)
+            }
+        }
+    }
     public private(set) var lookaheadSamples: Int
     public private(set) var sampleRate: Float
 
@@ -26,7 +33,8 @@ public final class TruePeakLimiter: @unchecked Sendable {
         ceilingDB: Float = -0.2,
         lookaheadSamples: Int = 48, // ~1ms at 48kHz
         sampleRate: Float = 48000.0,
-        isEnabled: Bool = true
+        isEnabled: Bool = true,
+        isLiveMode: Bool = false
     ) {
         let clampedCeil = min(0.0, max(-24.0, ceilingDB))
         self.ceilingDB = clampedCeil
@@ -34,6 +42,7 @@ public final class TruePeakLimiter: @unchecked Sendable {
         self.lookaheadSamples = min(1024, max(0, lookaheadSamples))
         self.sampleRate = max(8000.0, sampleRate)
         self.isEnabled = isEnabled
+        self.isLiveMode = isLiveMode
 
         if self.lookaheadSamples > 0 {
             self.cLimiter = c_lookahead_limiter_create(
@@ -41,6 +50,9 @@ public final class TruePeakLimiter: @unchecked Sendable {
                 self.sampleRate,
                 self.linearCeiling
             )
+            if let lim = self.cLimiter {
+                c_lookahead_limiter_set_live_mode(lim, isLiveMode)
+            }
         }
     }
 

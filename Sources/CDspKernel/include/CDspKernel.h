@@ -96,7 +96,12 @@ c_lookahead_limiter_t* c_lookahead_limiter_create(size_t lookahead_samples, floa
 void c_lookahead_limiter_destroy(c_lookahead_limiter_t* lim);
 void c_lookahead_limiter_reset(c_lookahead_limiter_t* lim);
 void c_lookahead_limiter_set_ceiling(c_lookahead_limiter_t* lim, float ceiling_linear);
+void c_lookahead_limiter_set_live_mode(c_lookahead_limiter_t* lim, bool live_mode);
+bool c_lookahead_limiter_get_live_mode(const c_lookahead_limiter_t* lim);
 void c_lookahead_limiter_process(c_lookahead_limiter_t* lim, float* left, float* right, size_t count);
+
+// Explicit M/S to L/R Decoder Matrix guarantee
+void c_dsp_ensure_midside_decoded(float* left, float* right, size_t count, bool is_midside);
 
 // ============================================================================
 // 5. Accelerate-Powered Telemetry: Peak, RMS, Clip & Phase Measurement
