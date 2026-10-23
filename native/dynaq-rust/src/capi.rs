@@ -138,6 +138,9 @@ pub extern "C" fn dynaq_rust_calculate_biquad(
         3 => FilterType::LowPass,
         4 => FilterType::HighPass,
         5 => FilterType::Notch,
+        6 => FilterType::BandPass,
+        7 => FilterType::TiltShelf,
+        8 => FilterType::AllPass,
         _ => FilterType::Bell,
     };
 

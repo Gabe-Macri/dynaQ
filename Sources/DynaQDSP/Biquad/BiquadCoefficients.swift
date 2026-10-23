@@ -108,6 +108,24 @@ public struct BiquadCoefficients: Sendable, Equatable {
             a0 = 1.0 + alpha
             a1 = -2.0 * cosW0
             a2 = 1.0 - alpha
+
+        case .tiltShelf:
+            let tiltA = pow(10.0, gainDB / 20.0)
+            let K = tan(w0 * 0.5)
+            b0 = tiltA + K
+            b1 = K - tiltA
+            b2 = 0.0
+            a0 = 1.0 + tiltA * K
+            a1 = tiltA * K - 1.0
+            a2 = 0.0
+
+        case .allPass:
+            b0 = 1.0 - alpha
+            b1 = -2.0 * cosW0
+            b2 = 1.0 + alpha
+            a0 = 1.0 + alpha
+            a1 = -2.0 * cosW0
+            a2 = 1.0 - alpha
         }
 
         // Normalize so a0 == 1.0

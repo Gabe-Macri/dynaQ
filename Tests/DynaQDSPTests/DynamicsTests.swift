@@ -78,6 +78,66 @@ final class DynamicsTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(gainReduction, -6.0, "Gain reduction should not exceed dynamicRange")
     }
 
+    func testDynamicEQBandpassSidechainFrequencySelectivity() {
+        let processorOnTarget = DynamicEQProcessor()
+        let processorOffTarget = DynamicEQProcessor()
+
+        let deEssBand = EQBand(
+            index: 0,
+            frequency: 8000.0,
+            gain: 0.0,
+            q: 2.0,
+            filterType: .bell,
+            isEnabled: true,
+            isDynamic: true,
+            dynamicThreshold: -18.0,
+            dynamicRange: -6.0,
+            dynamicRatio: 4.0,
+            attackMs: 2.0,
+            releaseMs: 30.0,
+            useSidechainFilter: true
+        )
+
+        let count = 512
+        let sampleRate: Float = 48000.0
+
+        // 1. On-target signal: 8 kHz sine wave at 0 dBFS
+        var onTargetSamples = [Float](repeating: 0.0, count: count)
+        for i in 0..<count {
+            onTargetSamples[i] = sin(2.0 * Float.pi * 8000.0 * Float(i) / sampleRate)
+        }
+
+        // 2. Off-target signal: 100 Hz kick drum sine wave at 0 dBFS
+        var offTargetSamples = [Float](repeating: 0.0, count: count)
+        for i in 0..<count {
+            offTargetSamples[i] = sin(2.0 * Float.pi * 100.0 * Float(i) / sampleRate)
+        }
+
+        var onTargetReduction: Float = 0.0
+        var offTargetReduction: Float = 0.0
+
+        for _ in 0..<15 {
+            onTargetReduction = processorOnTarget.processBlock(
+                samples: onTargetSamples,
+                count: count,
+                sampleRate: sampleRate,
+                band: deEssBand
+            )
+            offTargetReduction = processorOffTarget.processBlock(
+                samples: offTargetSamples,
+                count: count,
+                sampleRate: sampleRate,
+                band: deEssBand
+            )
+        }
+
+        // On-target (8 kHz sibilance) must trigger heavy dynamic compression
+        XCTAssertLessThan(onTargetReduction, -1.5, "8kHz on-target signal should trigger dynamic reduction.")
+
+        // Off-target (100 Hz bass) should NOT trigger the 8 kHz dynamic bandpass sidechain
+        XCTAssertEqual(offTargetReduction, 0.0, accuracy: 0.2, "100Hz signal should be rejected by 8kHz sidechain filter.")
+    }
+
     func testDynamicsErrorDescriptions() {
         let err1 = DynamicsError.invalidCeiling(5.0)
         let err2 = DynamicsError.invalidSampleRate(4000.0)

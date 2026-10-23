@@ -56,6 +56,7 @@ public final class ParametricEQEngine: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         self.sampleRate = max(newRate, 8000.0)
+        c_eq_engine_set_master_fx(&cEngine, profile.stereoWidth, profile.monoBassCutoff, profile.analogDrive, sampleRate)
         recalculateAllCoefficients(immediate: true)
         updateCurveCache()
     }
@@ -163,6 +164,7 @@ public final class ParametricEQEngine: @unchecked Sendable {
         case .rightOnly: modeInt = 4
         }
         c_eq_engine_set_params(&cEngine, profile.isBypassed, profile.phaseInvert, modeInt)
+        c_eq_engine_set_master_fx(&cEngine, profile.stereoWidth, profile.monoBassCutoff, profile.analogDrive, sampleRate)
     }
 
     private func recalculateAllCoefficients(immediate: Bool) {
@@ -274,7 +276,7 @@ public final class ParametricEQEngine: @unchecked Sendable {
                 } else if band.fmMode == .envelope && i < dynamicProcessors.count {
                     // Signal envelope tracking FM
                     let dyn = dynamicProcessors[i]
-                    let offsetDB = dyn.processBlock(samples: left, count: count, sampleRate: sampleRate, band: band)
+                    let offsetDB = dyn.processStereoBlock(left: left, right: right, count: count, sampleRate: sampleRate, band: band)
                     // Normalized dynamic envelope deflection
                     let envFactor = min(max(offsetDB / max(abs(band.dynamicRange), 1.0), -1.0), 1.0)
                     let octaveShift = envFactor * band.fmDepth
@@ -291,10 +293,10 @@ public final class ParametricEQEngine: @unchecked Sendable {
                 }
             }
 
-            // Dynamic Gain Modulation
+            // Dynamic Gain Modulation with frequency-targeted sidechain
             if band.isDynamic && !band.isFMEnabled && i < dynamicProcessors.count {
                 let dyn = dynamicProcessors[i]
-                let offsetDB = dyn.processBlock(samples: left, count: count, sampleRate: sampleRate, band: band)
+                let offsetDB = dyn.processStereoBlock(left: left, right: right, count: count, sampleRate: sampleRate, band: band)
                 targetGain += offsetDB
             }
 

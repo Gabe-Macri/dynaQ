@@ -78,6 +78,9 @@ pub enum FilterType {
     LowPass,
     HighPass,
     Notch,
+    BandPass,
+    TiltShelf,
+    AllPass,
 }
 
 /// Generates standard Audio EQ Cookbook biquad coefficients.
@@ -165,6 +168,35 @@ pub fn calculate_biquad(
             let b0 = 1.0;
             let b1 = -2.0 * cos_w0;
             let b2 = 1.0;
+            let a0 = 1.0 + alpha;
+            let a1 = -2.0 * cos_w0;
+            let a2 = 1.0 - alpha;
+            (b0, b1, b2, a0, a1, a2)
+        }
+        FilterType::BandPass => {
+            let b0 = alpha;
+            let b1 = 0.0;
+            let b2 = -alpha;
+            let a0 = 1.0 + alpha;
+            let a1 = -2.0 * cos_w0;
+            let a2 = 1.0 - alpha;
+            (b0, b1, b2, a0, a1, a2)
+        }
+        FilterType::TiltShelf => {
+            let tilt_a = 10.0f64.powf(gain_db / 20.0);
+            let k = (w0 * 0.5).tan();
+            let b0 = tilt_a + k;
+            let b1 = k - tilt_a;
+            let b2 = 0.0;
+            let a0 = 1.0 + tilt_a * k;
+            let a1 = tilt_a * k - 1.0;
+            let a2 = 0.0;
+            (b0, b1, b2, a0, a1, a2)
+        }
+        FilterType::AllPass => {
+            let b0 = 1.0 - alpha;
+            let b1 = -2.0 * cos_w0;
+            let b2 = 1.0 + alpha;
             let a0 = 1.0 + alpha;
             let a1 = -2.0 * cos_w0;
             let a2 = 1.0 - alpha;

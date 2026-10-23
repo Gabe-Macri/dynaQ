@@ -1,4 +1,5 @@
 import XCTest
+import CDspKernel
 @testable import DynaQCore
 @testable import DynaQDSP
 
@@ -194,5 +195,104 @@ final class BiquadFilterTests: XCTestCase {
         XCTAssertEqual(decoded.fmMode, FMMode.lfo)
         XCTAssertEqual(decoded.fmDepth, 1.5, accuracy: 0.01)
         XCTAssertEqual(decoded.fmRate, 2.5, accuracy: 0.01)
+    }
+
+    func testTiltShelfBaxandallResponse() {
+        let sampleRate: Float = 48000.0
+        let pivotFreq: Float = 1000.0
+        let gainDB: Float = 6.0
+
+        let coeffs = BiquadCoefficients.calculate(
+            type: .tiltShelf,
+            frequency: pivotFreq,
+            gainDB: gainDB,
+            q: 1.0,
+            sampleRate: sampleRate
+        )
+
+        XCTAssertTrue(coeffs.isStable, "Tilt shelf filter must be strictly stable.")
+
+        let magAtPivot = coeffs.magnitudeResponse(at: pivotFreq, sampleRate: sampleRate)
+        let magAtLows = coeffs.magnitudeResponse(at: 100.0, sampleRate: sampleRate)
+        let magAtHighs = coeffs.magnitudeResponse(at: 10000.0, sampleRate: sampleRate)
+
+        // At pivot frequency, magnitude must cross near 0 dB
+        XCTAssertEqual(magAtPivot, 0.0, accuracy: 0.5, "Tilt shelf pivot frequency response should be near 0 dB.")
+        // At high frequencies, positive boost
+        XCTAssertGreaterThan(magAtHighs, 2.0, "Highs should receive positive boost.")
+        // At low frequencies, symmetric cut
+        XCTAssertLessThan(magAtLows, -2.0, "Lows should receive symmetric attenuation.")
+    }
+
+    func testAllPassFilterFlatMagnitude() {
+        let sampleRate: Float = 48000.0
+        let centerFreq: Float = 2000.0
+
+        let coeffs = BiquadCoefficients.calculate(
+            type: .allPass,
+            frequency: centerFreq,
+            gainDB: 0.0,
+            q: 1.414,
+            sampleRate: sampleRate
+        )
+
+        XCTAssertTrue(coeffs.isStable, "All-pass filter must be strictly stable.")
+
+        // Flat magnitude across the entire audible spectrum
+        for testFreq: Float in [50.0, 500.0, 2000.0, 8000.0, 16000.0] {
+            let mag = coeffs.magnitudeResponse(at: testFreq, sampleRate: sampleRate)
+            XCTAssertEqual(mag, 0.0, accuracy: 0.01, "All-pass filter magnitude must be exactly 0 dB at \(testFreq) Hz.")
+        }
+    }
+
+    func testBandPassFilterResonance() {
+        let sampleRate: Float = 48000.0
+        let centerFreq: Float = 1000.0
+        let q: Float = 2.0
+
+        let coeffs = BiquadCoefficients.calculate(
+            type: .bandPass,
+            frequency: centerFreq,
+            gainDB: 0.0,
+            q: q,
+            sampleRate: sampleRate
+        )
+
+        XCTAssertTrue(coeffs.isStable, "Bandpass filter must be strictly stable.")
+
+        let magCenter = coeffs.magnitudeResponse(at: centerFreq, sampleRate: sampleRate)
+        let magLow = coeffs.magnitudeResponse(at: 100.0, sampleRate: sampleRate)
+        let magHigh = coeffs.magnitudeResponse(at: 10000.0, sampleRate: sampleRate)
+
+        XCTAssertEqual(magCenter, 0.0, accuracy: 0.1, "Bandpass peak must be 0 dB at center frequency.")
+        XCTAssertLessThan(magLow, -15.0, "Bandpass should attenuate low stopband.")
+        XCTAssertLessThan(magHigh, -15.0, "Bandpass should attenuate high stopband.")
+    }
+
+    func testMasterStereoWidthMonoCollapse() {
+        var left: [Float] = [0.8, -0.6, 0.4, 0.2]
+        var right: [Float] = [0.2, 0.4, -0.2, -0.8]
+        let count = left.count
+
+        // Collapse to mono (width = 0.0)
+        c_dsp_apply_stereo_width(&left, &right, count, 0.0)
+
+        for i in 0..<count {
+            XCTAssertEqual(left[i], right[i], accuracy: 0.0001, "Stereo width 0.0 must perfectly sum channels to mono.")
+        }
+    }
+
+    func testAnalogWarmthSoftKneeDrive() {
+        var left: [Float] = [0.2, 0.5, 0.9, 1.5]
+        var right: [Float] = [-0.2, -0.5, -0.9, -1.5]
+        let count = left.count
+
+        c_dsp_apply_analog_drive(&left, &right, count, 0.5)
+
+        for i in 0..<count {
+            XCTAssertFalse(left[i].isNaN, "Analog drive output must not be NaN.")
+            XCTAssertFalse(left[i].isInfinite, "Analog drive output must not be Infinite.")
+            XCTAssertLessThan(abs(left[i]), 1.25, "Analog drive must softly saturate large peaks.")
+        }
     }
 }

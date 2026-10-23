@@ -55,6 +55,7 @@ public struct EQBand: Identifiable, Codable, Equatable, Sendable {
     public var dynamicRatio: Float        // Compression/Expansion ratio (1.0 to 10.0)
     public var attackMs: Float            // Envelope attack time in ms
     public var releaseMs: Float           // Envelope release time in ms
+    public var useSidechainFilter: Bool   // Frequency-selective sidechain bandpass detection
 
     // MARK: - Frequency Modulation (FM EQ) Parameters
     public var isFMEnabled: Bool          // True when dynamic frequency modulation is active
@@ -78,6 +79,7 @@ public struct EQBand: Identifiable, Codable, Equatable, Sendable {
         dynamicRatio: Float = 2.0,
         attackMs: Float = 10.0,
         releaseMs: Float = 100.0,
+        useSidechainFilter: Bool = false,
         isFMEnabled: Bool = false,
         fmMode: FMMode = .envelope,
         fmDepth: Float = 0.5,
@@ -98,6 +100,7 @@ public struct EQBand: Identifiable, Codable, Equatable, Sendable {
         self.dynamicRatio = dynamicRatio
         self.attackMs = attackMs
         self.releaseMs = releaseMs
+        self.useSidechainFilter = useSidechainFilter
         self.isFMEnabled = isFMEnabled
         self.fmMode = fmMode
         self.fmDepth = min(max(fmDepth, -3.0), 3.0)
@@ -106,7 +109,7 @@ public struct EQBand: Identifiable, Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case id, index, frequency, gain, q, filterType, routing, isEnabled, isSolo
-        case isDynamic, dynamicThreshold, dynamicRange, dynamicRatio, attackMs, releaseMs
+        case isDynamic, dynamicThreshold, dynamicRange, dynamicRatio, attackMs, releaseMs, useSidechainFilter
         case isFMEnabled, fmMode, fmDepth, fmRate
     }
 
@@ -127,6 +130,7 @@ public struct EQBand: Identifiable, Codable, Equatable, Sendable {
         self.dynamicRatio = try c.decodeIfPresent(Float.self, forKey: .dynamicRatio) ?? 2.0
         self.attackMs = try c.decodeIfPresent(Float.self, forKey: .attackMs) ?? 10.0
         self.releaseMs = try c.decodeIfPresent(Float.self, forKey: .releaseMs) ?? 100.0
+        self.useSidechainFilter = try c.decodeIfPresent(Bool.self, forKey: .useSidechainFilter) ?? false
         self.isFMEnabled = try c.decodeIfPresent(Bool.self, forKey: .isFMEnabled) ?? false
         self.fmMode = try c.decodeIfPresent(FMMode.self, forKey: .fmMode) ?? .envelope
         self.fmDepth = try c.decodeIfPresent(Float.self, forKey: .fmDepth) ?? 0.5

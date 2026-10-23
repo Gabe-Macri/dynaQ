@@ -186,6 +186,10 @@ void c_eq_engine_init(c_eq_engine_t* eq) {
     eq->is_bypassed = false;
     eq->phase_invert = false;
     eq->monitor_mode = 0; // Stereo
+    eq->stereo_width = 1.0f;
+    eq->mono_bass_cutoff = 0.0f;
+    eq->analog_drive = 0.0f;
+    eq->mono_bass_coeffs = (c_biquad_coeffs_t){ 1.0f, 0.0f, 0.0f, 0.0f, 0.0f };
 
     for (int i = 0; i < C_DSP_MAX_BANDS; i++) {
         eq->bands[i].current.b0 = 1.0f;
@@ -203,6 +207,8 @@ void c_eq_engine_reset_state(c_eq_engine_t* eq) {
         eq->bands[i].s1_right = 0.0f;
         eq->bands[i].s2_right = 0.0f;
     }
+    eq->mono_bass_s1 = 0.0f;
+    eq->mono_bass_s2 = 0.0f;
 }
 
 bool c_biquad_is_stable(c_biquad_coeffs_t coeffs) {
@@ -249,6 +255,106 @@ void c_eq_engine_set_params(c_eq_engine_t* eq, bool is_bypassed, bool phase_inve
     eq->is_bypassed = is_bypassed;
     eq->phase_invert = phase_invert;
     eq->monitor_mode = monitor_mode;
+}
+
+void c_eq_engine_set_master_fx(c_eq_engine_t* eq, float stereo_width, float mono_bass_cutoff, float analog_drive, float sample_rate) {
+    if (!eq) return;
+    eq->stereo_width = (stereo_width >= 0.0f && stereo_width <= 2.0f) ? stereo_width : 1.0f;
+    eq->mono_bass_cutoff = (mono_bass_cutoff >= 0.0f && mono_bass_cutoff <= 300.0f) ? mono_bass_cutoff : 0.0f;
+    eq->analog_drive = (analog_drive >= 0.0f && analog_drive <= 1.0f) ? analog_drive : 0.0f;
+
+    if (eq->mono_bass_cutoff > 10.0f && sample_rate > 8000.0f) {
+        float nyquist = sample_rate * 0.49f;
+        float fc = eq->mono_bass_cutoff > nyquist ? nyquist : eq->mono_bass_cutoff;
+        float w0 = 2.0f * (float)M_PI * (fc / sample_rate);
+        float cosW0 = cosf(w0);
+        float sinW0 = sinf(w0);
+        float alpha = sinW0 * 0.70710678f; // Q = 0.7071 (Butterworth High-Pass)
+
+        float b0 = (1.0f + cosW0) * 0.5f;
+        float b1 = -(1.0f + cosW0);
+        float b2 = (1.0f + cosW0) * 0.5f;
+        float a0 = 1.0f + alpha;
+        float a1 = -2.0f * cosW0;
+        float a2 = 1.0f - alpha;
+
+        if (fabsf(a0) > 1e-6f) {
+            float inv_a0 = 1.0f / a0;
+            eq->mono_bass_coeffs.b0 = b0 * inv_a0;
+            eq->mono_bass_coeffs.b1 = b1 * inv_a0;
+            eq->mono_bass_coeffs.b2 = b2 * inv_a0;
+            eq->mono_bass_coeffs.a1 = a1 * inv_a0;
+            eq->mono_bass_coeffs.a2 = a2 * inv_a0;
+        }
+    } else {
+        eq->mono_bass_coeffs = (c_biquad_coeffs_t){ 1.0f, 0.0f, 0.0f, 0.0f, 0.0f };
+        eq->mono_bass_s1 = 0.0f;
+        eq->mono_bass_s2 = 0.0f;
+    }
+}
+
+static inline void process_biquad_direct(
+    float* __restrict__ buffer,
+    size_t count,
+    const c_biquad_coeffs_t* __restrict__ coeffs,
+    float* __restrict__ s1_ptr,
+    float* __restrict__ s2_ptr
+) {
+    const float b0 = coeffs->b0;
+    const float b1 = coeffs->b1;
+    const float b2 = coeffs->b2;
+    const float a1 = coeffs->a1;
+    const float a2 = coeffs->a2;
+
+    float s1 = *s1_ptr;
+    float s2 = *s2_ptr;
+
+    #pragma clang loop unroll_count(4)
+    for (size_t i = 0; i < count; i++) {
+        float x = buffer[i];
+        float y = b0 * x + s1;
+        s1 = b1 * x - a1 * y + s2;
+        s2 = b2 * x - a2 * y;
+        buffer[i] = y;
+    }
+
+    if (fabsf(s1) < 1e-15f) s1 = 0.0f;
+    if (fabsf(s2) < 1e-15f) s2 = 0.0f;
+
+    *s1_ptr = s1;
+    *s2_ptr = s2;
+}
+
+void c_dsp_apply_analog_drive(float* left, float* right, size_t count, float drive) {
+    if (!left || !right || count == 0 || drive <= 0.001f) return;
+
+    const float k = 1.0f + 2.5f * drive;
+    const float norm = 1.0f / sqrtf(k);
+    const float asymmetry = 0.12f * drive;
+
+    #pragma clang loop unroll_count(4)
+    for (size_t i = 0; i < count; i++) {
+        float xl = left[i] * k;
+        float sat_l = tanhf(xl) + asymmetry * xl * fabsf(xl);
+        left[i] = sat_l * norm;
+
+        float xr = right[i] * k;
+        float sat_r = tanhf(xr) + asymmetry * xr * fabsf(xr);
+        right[i] = sat_r * norm;
+    }
+}
+
+void c_dsp_apply_stereo_width(float* left, float* right, size_t count, float width) {
+    if (!left || !right || count == 0 || fabsf(width - 1.0f) < 1e-4f) return;
+    const float w = width;
+
+    #pragma clang loop unroll_count(4)
+    for (size_t i = 0; i < count; i++) {
+        float m = (left[i] + right[i]) * 0.5f;
+        float s = (left[i] - right[i]) * 0.5f * w;
+        left[i] = m + s;
+        right[i] = m - s;
+    }
 }
 
 static inline void process_biquad_single_channel(
@@ -322,58 +428,77 @@ void c_eq_engine_process_stereo(c_eq_engine_t* eq, float* left, float* right, si
         vDSP_vsmul(right, 1, &neg, right, 1, count);
     }
 
-    // Thread-safe scratch memory for Mid/Side matrixing
-    float stack_mid[2048];
-    float stack_side[2048];
-    float* mid_buf = stack_mid;
-    float* side_buf = stack_side;
-    bool allocated = false;
+    // Real-time zero-heap scratch buffer processing in chunks up to C_DSP_SCRATCH_SIZE
+    size_t processed = 0;
+    while (processed < count) {
+        size_t chunk = (count - processed) > C_DSP_SCRATCH_SIZE ? C_DSP_SCRATCH_SIZE : (count - processed);
+        float* cur_left = left + processed;
+        float* cur_right = right + processed;
+        float* mid_buf = eq->scratch_mid;
+        float* side_buf = eq->scratch_side;
 
-    if (count > 2048) {
-        mid_buf = (float*)malloc(count * sizeof(float));
-        side_buf = (float*)malloc(count * sizeof(float));
-        allocated = true;
-    }
+        // 3. Cascade of Biquad Filter Bands
+        for (int b = 0; b < eq->band_count; b++) {
+            c_biquad_channel_t* band = &eq->bands[b];
+            if (!band->is_enabled) continue;
 
-    // 3. Cascade of Biquad Filter Bands
-    for (int b = 0; b < eq->band_count; b++) {
-        c_biquad_channel_t* band = &eq->bands[b];
-        if (!band->is_enabled) continue;
+            switch (band->routing) {
+                case 0: // Stereo (both channels)
+                    process_biquad_single_channel(cur_left, chunk, &band->current, &band->target, &band->s1_left, &band->s2_left);
+                    process_biquad_single_channel(cur_right, chunk, &band->current, &band->target, &band->s1_right, &band->s2_right);
+                    break;
 
-        switch (band->routing) {
-            case 0: // Stereo (both channels)
-                process_biquad_single_channel(left, count, &band->current, &band->target, &band->s1_left, &band->s2_left);
-                process_biquad_single_channel(right, count, &band->current, &band->target, &band->s1_right, &band->s2_right);
-                break;
+                case 3: // Left Only
+                    process_biquad_single_channel(cur_left, chunk, &band->current, &band->target, &band->s1_left, &band->s2_left);
+                    break;
 
-            case 3: // Left Only
-                process_biquad_single_channel(left, count, &band->current, &band->target, &band->s1_left, &band->s2_left);
-                break;
+                case 4: // Right Only
+                    process_biquad_single_channel(cur_right, chunk, &band->current, &band->target, &band->s1_right, &band->s2_right);
+                    break;
 
-            case 4: // Right Only
-                process_biquad_single_channel(right, count, &band->current, &band->target, &band->s1_right, &band->s2_right);
-                break;
+                case 1: // Mid Channel Only: Mid = (L + R) * 0.5, Side = (L - R) * 0.5
+                    c_dsp_midside_encode(cur_left, cur_right, mid_buf, side_buf, chunk);
+                    process_biquad_single_channel(mid_buf, chunk, &band->current, &band->target, &band->s1_left, &band->s2_left);
+                    c_dsp_midside_decode(mid_buf, side_buf, cur_left, cur_right, chunk);
+                    break;
 
-            case 1: // Mid Channel Only: Mid = (L + R) * 0.5, Side = (L - R) * 0.5
-                c_dsp_midside_encode(left, right, mid_buf, side_buf, count);
-                process_biquad_single_channel(mid_buf, count, &band->current, &band->target, &band->s1_left, &band->s2_left);
-                c_dsp_midside_decode(mid_buf, side_buf, left, right, count);
-                break;
-
-            case 2: // Side Channel Only
-                c_dsp_midside_encode(left, right, mid_buf, side_buf, count);
-                process_biquad_single_channel(side_buf, count, &band->current, &band->target, &band->s1_right, &band->s2_right);
-                c_dsp_midside_decode(mid_buf, side_buf, left, right, count);
-                break;
+                case 2: // Side Channel Only
+                    c_dsp_midside_encode(cur_left, cur_right, mid_buf, side_buf, chunk);
+                    process_biquad_single_channel(side_buf, chunk, &band->current, &band->target, &band->s1_right, &band->s2_right);
+                    c_dsp_midside_decode(mid_buf, side_buf, cur_left, cur_right, chunk);
+                    break;
+            }
         }
+
+        // 4. Stereo Modification: Mono Sub-Bass & Master Stereo Width
+        bool has_mono_bass = (eq->mono_bass_cutoff > 10.0f);
+        bool has_width = (fabsf(eq->stereo_width - 1.0f) > 1e-4f);
+        if (has_mono_bass || has_width) {
+            c_dsp_midside_encode(cur_left, cur_right, mid_buf, side_buf, chunk);
+
+            // High-pass filter the side channel to sum sub-bass to mono
+            if (has_mono_bass) {
+                process_biquad_direct(side_buf, chunk, &eq->mono_bass_coeffs, &eq->mono_bass_s1, &eq->mono_bass_s2);
+            }
+
+            // Scale side channel by stereo width (0.0 = mono, 2.0 = 200%)
+            if (has_width) {
+                float w = eq->stereo_width;
+                vDSP_vsmul(side_buf, 1, &w, side_buf, 1, chunk);
+            }
+
+            c_dsp_midside_decode(mid_buf, side_buf, cur_left, cur_right, chunk);
+        }
+
+        processed += chunk;
     }
 
-    if (allocated) {
-        if (mid_buf) free(mid_buf);
-        if (side_buf) free(side_buf);
+    // 5. Analog Warmth / Soft-Knee Saturation Drive
+    if (eq->analog_drive > 0.001f) {
+        c_dsp_apply_analog_drive(left, right, count, eq->analog_drive);
     }
 
-    // 4. Vectorized Master Gain
+    // 6. Vectorized Master Gain
     if (fabsf(eq->master_gain_linear - 1.0f) > 1e-4f) {
         float g = eq->master_gain_linear;
         vDSP_vsmul(left, 1, &g, left, 1, count);

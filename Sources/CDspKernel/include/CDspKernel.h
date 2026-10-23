@@ -58,6 +58,7 @@ typedef struct {
 } c_biquad_channel_t;
 
 #define C_DSP_MAX_BANDS 16
+#define C_DSP_SCRATCH_SIZE 8192
 
 typedef struct {
     c_biquad_channel_t bands[C_DSP_MAX_BANDS];
@@ -66,7 +67,20 @@ typedef struct {
     float master_gain_linear;
     bool is_bypassed;
     bool phase_invert;
-    int monitor_mode; // 0 = Stereo, 1 = Mono, 2 = Sides
+    int monitor_mode; // 0 = Stereo, 1 = Mono, 2 = Sides, 3 = LeftOnly, 4 = RightOnly
+
+    // Master Stereo & Modification Parameters
+    float stereo_width;       // 0.0 (mono) to 2.0 (200% wide), default 1.0
+    float mono_bass_cutoff;   // Cutoff in Hz (0.0 = off, up to 300 Hz)
+    float analog_drive;       // 0.0 (off) to 1.0 (warm soft saturation)
+
+    // Mono-bass sidechain high-pass filter state & coefficients
+    c_biquad_coeffs_t mono_bass_coeffs;
+    float mono_bass_s1, mono_bass_s2;
+
+    // Static audio-thread scratch buffers to guarantee zero heap allocations
+    float scratch_mid[C_DSP_SCRATCH_SIZE];
+    float scratch_side[C_DSP_SCRATCH_SIZE];
 } c_eq_engine_t;
 
 void c_eq_engine_init(c_eq_engine_t* eq);
@@ -75,7 +89,12 @@ void c_eq_engine_set_band(c_eq_engine_t* eq, int index, c_biquad_coeffs_t coeffs
 c_dsp_status_t c_eq_engine_set_band_safe(c_eq_engine_t* eq, int index, c_biquad_coeffs_t coeffs, int routing, bool enabled, bool immediate);
 void c_eq_engine_set_gains(c_eq_engine_t* eq, float preamp_gain_linear, float master_gain_linear);
 void c_eq_engine_set_params(c_eq_engine_t* eq, bool is_bypassed, bool phase_invert, int monitor_mode);
+void c_eq_engine_set_master_fx(c_eq_engine_t* eq, float stereo_width, float mono_bass_cutoff, float analog_drive, float sample_rate);
 void c_eq_engine_process_stereo(c_eq_engine_t* eq, float* left, float* right, size_t count);
+
+// Master Audio Modifiers
+void c_dsp_apply_analog_drive(float* left, float* right, size_t count, float drive);
+void c_dsp_apply_stereo_width(float* left, float* right, size_t count, float width);
 
 // ============================================================================
 // 3. Vectorized Mid/Side Encoding & Decoding

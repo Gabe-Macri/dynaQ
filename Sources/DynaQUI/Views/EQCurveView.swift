@@ -104,10 +104,47 @@ public struct EQCurveView: View {
                         },
                         onSelect: {
                             selectedBandID = band.id
+                        },
+                        onChangeFilterType: { newType in
+                            profile.bands[index].filterType = newType
+                            rebuildCachedPath(size: geo.size)
+                        },
+                        onChangeRouting: { newRoute in
+                            profile.bands[index].routing = newRoute
+                            rebuildCachedPath(size: geo.size)
+                        },
+                        onChangeQ: { deltaQ in
+                            let currentQ = profile.bands[index].q
+                            profile.bands[index].q = min(max(currentQ + deltaQ, 0.1), 18.0)
+                            rebuildCachedPath(size: geo.size)
+                        },
+                        onToggleSolo: {
+                            profile.bands[index].isSolo.toggle()
+                            rebuildCachedPath(size: geo.size)
+                        },
+                        onToggleEnabled: {
+                            profile.bands[index].isEnabled.toggle()
+                            rebuildCachedPath(size: geo.size)
+                        },
+                        onDelete: {
+                            guard profile.bands.count > 1 else { return }
+                            profile.bands.remove(at: index)
+                            for i in 0..<profile.bands.count {
+                                profile.bands[i].index = i
+                            }
+                            selectedBandID = profile.bands.first?.id
+                            rebuildCachedPath(size: geo.size)
                         }
                     )
                 }
             }
+            .contentShape(Rectangle())
+            .gesture(
+                SpatialTapGesture(count: 2)
+                    .onEnded { event in
+                        addNewBandAt(location: event.location, size: geo.size)
+                    }
+            )
             .background(DynaQTheme.bg)
             .overlay(
                 Rectangle().stroke(DynaQTheme.surfaceBorder, lineWidth: 1)
@@ -169,6 +206,23 @@ public struct EQCurveView: View {
             band.gain = gainFor(y: point.y, height: size.height)
         }
         profile.bands[index] = band
+    }
+
+    private func addNewBandAt(location: CGPoint, size: CGSize) {
+        guard profile.bands.count < 16, size.width > 0, size.height > 0 else { return }
+        let freq = frequencyFor(x: location.x, width: size.width)
+        let gain = gainFor(y: location.y, height: size.height)
+        let newBand = EQBand(
+            index: profile.bands.count,
+            frequency: freq,
+            gain: gain,
+            q: 1.414,
+            filterType: .bell,
+            routing: .stereo
+        )
+        profile.bands.append(newBand)
+        selectedBandID = newBand.id
+        rebuildCachedPath(size: size)
     }
 
     // MARK: - High Performance Curve Cache Builder
@@ -347,6 +401,12 @@ private struct TerminalBandNode: View {
     let onDrag: (CGPoint) -> Void
     let onDragEnd: () -> Void
     let onSelect: () -> Void
+    var onChangeFilterType: ((FilterType) -> Void)? = nil
+    var onChangeRouting: ((BandRouting) -> Void)? = nil
+    var onChangeQ: ((Float) -> Void)? = nil
+    var onToggleSolo: (() -> Void)? = nil
+    var onToggleEnabled: (() -> Void)? = nil
+    var onDelete: (() -> Void)? = nil
 
     @State private var isDragging: Bool = false
 
@@ -362,8 +422,24 @@ private struct TerminalBandNode: View {
                         Text("\(band.filterType.shortName) | \(band.routing.shortBadge) | Q:\(String(format: "%.2f", band.q))")
                             .font(.system(size: 8, weight: .bold, design: .monospaced))
                             .foregroundColor(color)
+
+                        // Precision Q-Trim Steppers
+                        Button(action: { onChangeQ?(-0.2) }) {
+                            Text("[-]")
+                                .font(.system(size: 8, weight: .heavy, design: .monospaced))
+                                .foregroundColor(DynaQTheme.textSecondary)
+                        }
+                        .buttonStyle(.plain)
+
+                        Button(action: { onChangeQ?(0.2) }) {
+                            Text("[+]")
+                                .font(.system(size: 8, weight: .heavy, design: .monospaced))
+                                .foregroundColor(DynaQTheme.textSecondary)
+                        }
+                        .buttonStyle(.plain)
+
                         if band.isFMEnabled {
-                            Text("| FM:\(band.fmMode.shortBadge) \(String(format: "%+.1f", band.fmDepth))Oct")
+                            Text("| FM:\(band.fmMode.shortBadge)")
                                 .font(.system(size: 8, weight: .bold, design: .monospaced))
                                 .foregroundColor(DynaQTheme.terminalCyan)
                         }
@@ -400,6 +476,59 @@ private struct TerminalBandNode: View {
                 .foregroundColor(isSelected ? Color.white : color)
         }
         .position(position)
+        .contextMenu {
+            Menu("FILTER TYPE [ \(band.filterType.shortName.uppercased()) ]") {
+                ForEach(FilterType.allCases) { type in
+                    Button(action: { onChangeFilterType?(type) }) {
+                        HStack {
+                            Text(type.rawValue.uppercased())
+                            if band.filterType == type {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            }
+
+            Menu("CHANNEL ROUTING [ \(band.routing.shortBadge) ]") {
+                ForEach(BandRouting.allCases) { route in
+                    Button(action: { onChangeRouting?(route) }) {
+                        HStack {
+                            Text(route.rawValue.uppercased())
+                            if band.routing == route {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            }
+
+            Menu("BANDWIDTH (Q) [ \(String(format: "%.2f", band.q)) ]") {
+                Button("WIDER (Q -0.5)") { onChangeQ?(-0.5) }
+                Button("NARROWER (Q +0.5)") { onChangeQ?(0.5) }
+                Divider()
+                Button("BROAD (Q = 0.707)") { onChangeQ?(0.707 - band.q) }
+                Button("STANDARD (Q = 1.414)") { onChangeQ?(1.414 - band.q) }
+                Button("TIGHT (Q = 3.5)") { onChangeQ?(3.5 - band.q) }
+                Button("SURGICAL NOTCH (Q = 8.0)") { onChangeQ?(8.0 - band.q) }
+            }
+
+            Divider()
+
+            Button(band.isSolo ? "UNSOLO BAND" : "SOLO BAND") {
+                onToggleSolo?()
+            }
+
+            Button(band.isEnabled ? "BYPASS BAND" : "ENABLE BAND") {
+                onToggleEnabled?()
+            }
+
+            Divider()
+
+            Button("DELETE BAND", role: .destructive) {
+                onDelete?()
+            }
+        }
         .gesture(
             DragGesture(minimumDistance: 1)
                 .onChanged { gesture in

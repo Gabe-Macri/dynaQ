@@ -26,6 +26,9 @@ public struct EQProfile: Identifiable, Codable, Equatable, Sendable {
     public var isLiveMode: Bool         // Zero-latency mode (bypasses lookahead delay line for DAW tracking)
     public var phaseInvert: Bool        // 180° polarity flip
     public var monitorMode: MonitorMode
+    public var stereoWidth: Float       // Stereo width (0.0 = Mono, 1.0 = Normal, 2.0 = 200% Wide)
+    public var monoBassCutoff: Float    // Mono Sub-Bass cutoff in Hz (0.0 = Off, 20.0 to 300.0 Hz)
+    public var analogDrive: Float       // Analog warmth/tape soft-saturation (0.0 = Clean, 1.0 = Max Saturation)
     public var isFactory: Bool
     public var createdAt: Date
     public var updatedAt: Date
@@ -44,6 +47,9 @@ public struct EQProfile: Identifiable, Codable, Equatable, Sendable {
         isLiveMode: Bool = false,
         phaseInvert: Bool = false,
         monitorMode: MonitorMode = .stereo,
+        stereoWidth: Float = 1.0,
+        monoBassCutoff: Float = 0.0,
+        analogDrive: Float = 0.0,
         isFactory: Bool = false,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
@@ -61,6 +67,9 @@ public struct EQProfile: Identifiable, Codable, Equatable, Sendable {
         self.isLiveMode = isLiveMode
         self.phaseInvert = phaseInvert
         self.monitorMode = monitorMode
+        self.stereoWidth = stereoWidth
+        self.monoBassCutoff = monoBassCutoff
+        self.analogDrive = analogDrive
         self.isFactory = isFactory
         self.createdAt = createdAt
         self.updatedAt = updatedAt
@@ -81,6 +90,9 @@ public struct EQProfile: Identifiable, Codable, Equatable, Sendable {
         isLiveMode = try container.decodeIfPresent(Bool.self, forKey: .isLiveMode) ?? false
         phaseInvert = try container.decodeIfPresent(Bool.self, forKey: .phaseInvert) ?? false
         monitorMode = try container.decodeIfPresent(MonitorMode.self, forKey: .monitorMode) ?? .stereo
+        stereoWidth = try container.decodeIfPresent(Float.self, forKey: .stereoWidth) ?? 1.0
+        monoBassCutoff = try container.decodeIfPresent(Float.self, forKey: .monoBassCutoff) ?? 0.0
+        analogDrive = try container.decodeIfPresent(Float.self, forKey: .analogDrive) ?? 0.0
         isFactory = try container.decodeIfPresent(Bool.self, forKey: .isFactory) ?? false
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
@@ -104,6 +116,9 @@ public struct EQProfile: Identifiable, Codable, Equatable, Sendable {
         copy.preampGain = preampGain.isFinite ? max(-36.0, min(36.0, preampGain)) : 0.0
         copy.masterGain = masterGain.isFinite ? max(-36.0, min(36.0, masterGain)) : 0.0
         copy.limiterCeiling = limiterCeiling.isFinite ? max(-24.0, min(0.0, limiterCeiling)) : -0.2
+        copy.stereoWidth = stereoWidth.isFinite ? max(0.0, min(2.0, stereoWidth)) : 1.0
+        copy.monoBassCutoff = monoBassCutoff.isFinite ? max(0.0, min(300.0, monoBassCutoff)) : 0.0
+        copy.analogDrive = analogDrive.isFinite ? max(0.0, min(1.0, analogDrive)) : 0.0
         copy.bands = bands.map { band in
             var b = band
             b.frequency = (band.frequency.isFinite && band.frequency >= 10.0 && band.frequency <= 24000.0)

@@ -61,10 +61,7 @@ public final class ClientDSPPipeline: AudioProcessingClient, @unchecked Sendable
         // 1. Heavy Multi-band Parametric & Dynamic EQ Filtering (Vector C Kernel)
         eqEngine.processStereo(left: left, right: right, count: count)
 
-        // 2. Explicit M/S to L/R Decoder Matrix: Guarantee stereo is decoded to discrete L/R before limiting
-        c_dsp_ensure_midside_decoded(left, right, count, eqEngine.isMidSideActive)
-
-        // 3. True Peak Soft-Knee Limiting (Supports Zero-Latency Live Mode vs Lookahead 4x Oversampling)
+        // 2. True Peak Soft-Knee Limiting (Supports Zero-Latency Live Mode vs Lookahead 4x Oversampling)
         limiter.processStereo(left: left, right: right, count: count)
 
         // 4. Tap audio via lock-free SPSC ring buffer for background UI/worker thread

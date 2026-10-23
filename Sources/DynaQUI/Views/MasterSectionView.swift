@@ -105,6 +105,40 @@ public struct MasterSectionView: View {
                 .fill(DynaQTheme.surfaceBorder)
                 .frame(width: 1, height: 50)
 
+            // Master Audio Modifiers: Stereo Width, Mono Bass Summing, Warmth Drive
+            HStack(spacing: 8) {
+                RotaryKnob(
+                    title: "Width",
+                    value: $profile.stereoWidth,
+                    range: 0.0...2.0,
+                    defaultValue: 1.0,
+                    unit: "x",
+                    tintColor: DynaQTheme.bandColors[6]
+                )
+
+                RotaryKnob(
+                    title: "MonoSub",
+                    value: $profile.monoBassCutoff,
+                    range: 0.0...250.0,
+                    defaultValue: 0.0,
+                    unit: "Hz",
+                    tintColor: DynaQTheme.phosphorAmber
+                )
+
+                RotaryKnob(
+                    title: "Drive",
+                    value: $profile.analogDrive,
+                    range: 0.0...1.0,
+                    defaultValue: 0.0,
+                    unit: "drv",
+                    tintColor: DynaQTheme.bandColors[0]
+                )
+            }
+
+            Rectangle()
+                .fill(DynaQTheme.surfaceBorder)
+                .frame(width: 1, height: 50)
+
             // Audition & Polarity Flip
             VStack(spacing: 5) {
                 // Phase Invert Button
